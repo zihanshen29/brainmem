@@ -2,6 +2,10 @@ class BrainError(Exception):
     """Base for all brain-specific errors."""
 
 
+class PageParseError(BrainError):
+    """Raised when a markdown page cannot be parsed."""
+
+
 class ConfigError(BrainError):
     """Raised when configuration cannot be loaded or validated."""
 
