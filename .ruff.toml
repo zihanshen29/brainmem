@@ -1,0 +1,18 @@
+line-length = 100
+target-version = "py311"
+
+[lint]
+select = [
+    "E", "W",
+    "F",
+    "I",
+    "B",
+    "UP",
+    "SIM",
+    "TID",
+    "RUF",
+]
+ignore = ["E501"]
+
+[format]
+quote-style = "double"
