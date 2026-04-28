@@ -159,6 +159,54 @@ def test_rewrite_compiled_truth_happy_path(monkeypatch: pytest.MonkeyPatch) -> N
     assert result == "Zihan is currently in the US."
 
 
+def test_answer_question_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    prompts: list[str] = []
+
+    def fake_extract(prompt: str) -> dict[str, object]:
+        prompts.append(prompt)
+        return {
+            "answer": "Alice maintains Brain and is working on the ask CLI.",
+            "sources": ["alice", "brain-ask"],
+        }
+
+    monkeypatch.setattr(llm_client, "_extract_impl", fake_extract)
+
+    result = llm_client.answer_question(
+        "What is Alice working on?",
+        [
+            {
+                "slug": "alice",
+                "title": "Alice",
+                "compiled_truth": "Alice maintains Brain.",
+                "timeline": ["- 2026-04-28 [event:01KQA8R9KVCG906A0203VYEQF7]: Ask CLI work."],
+            }
+        ],
+    )
+
+    assert result.answer == "Alice maintains Brain and is working on the ask CLI."
+    assert result.sources == ["alice", "brain-ask"]
+    assert "What is Alice working on?" in prompts[0]
+    assert "Return an object with keys: answer, sources." in prompts[0]
+
+
+def test_answer_question_invalid_json_raises_llm_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(llm_client, "_extract_impl", lambda prompt: "{not valid json")
+
+    with pytest.raises(LLMError):
+        llm_client.answer_question("What is Alice doing?", [])
+
+
+def test_answer_question_schema_invalid_preserves_validation_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(llm_client, "_extract_impl", lambda prompt: {"sources": []})
+
+    with pytest.raises(ValidationError):
+        llm_client.answer_question("What is Alice doing?", [])
+
+
 def test_api_exception_retries_once_then_wraps(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = 0
 

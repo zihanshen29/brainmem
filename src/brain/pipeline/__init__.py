@@ -1,3 +1,4 @@
+from brain.pipeline.ask import AskModeTrace, AskPageSummary, AskResult, ask
 from brain.pipeline.autolink import extract_backlinks
 from brain.pipeline.conflict import Decision, classify_fact
 from brain.pipeline.ingest import IngestReport, ingest
@@ -29,6 +30,9 @@ from brain.pipeline.signal_detect import SignalEntity, SignalExtraction, detect_
 from brain.pipeline.tier import TierProposal, check_tier_upgrade
 
 __all__ = [
+    "AskModeTrace",
+    "AskPageSummary",
+    "AskResult",
     "Decision",
     "IngestReport",
     "LintIssue",
@@ -45,6 +49,7 @@ __all__ = [
     "TierProposal",
     "apply_decision",
     "apply_pending",
+    "ask",
     "check_tier_upgrade",
     "classify_fact",
     "detect_signal",

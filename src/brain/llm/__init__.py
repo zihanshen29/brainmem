@@ -1,5 +1,7 @@
 from brain.llm.client import (
     ConflictJudgment,
+    QuestionAnswer,
+    answer_question,
     extract_signal,
     judge_conflict,
     rewrite_compiled_truth,
@@ -7,6 +9,8 @@ from brain.llm.client import (
 
 __all__ = [
     "ConflictJudgment",
+    "QuestionAnswer",
+    "answer_question",
     "extract_signal",
     "judge_conflict",
     "rewrite_compiled_truth",

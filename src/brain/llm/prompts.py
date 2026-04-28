@@ -57,3 +57,24 @@ def build_compiled_truth_prompt(
             json.dumps(payload, ensure_ascii=False, sort_keys=True),
         ]
     )
+
+
+def build_question_answer_prompt(query: str, pages: list[dict[str, Any]]) -> str:
+    """Build the prompt for answering a question from retrieved brain pages."""
+    payload = {
+        "query": query,
+        "pages": pages,
+    }
+    return "\n".join(
+        [
+            "Answer the user's question using only the provided brain pages.",
+            "If the pages do not contain enough information, say you do not know.",
+            "Do not invent facts or use outside knowledge.",
+            JSON_ONLY_INSTRUCTIONS,
+            "Return an object with keys: answer, sources.",
+            "sources must be a list of page slugs used in the answer.",
+            "",
+            "Question evidence JSON:",
+            json.dumps(payload, ensure_ascii=False, sort_keys=True),
+        ]
+    )

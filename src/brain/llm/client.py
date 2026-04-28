@@ -13,6 +13,7 @@ from brain.exceptions import ConfigError, LLMError
 from brain.llm.prompts import (
     build_compiled_truth_prompt,
     build_conflict_prompt,
+    build_question_answer_prompt,
     build_signal_extraction_prompt,
 )
 from brain.models.fact import Fact, FactCandidate
@@ -66,6 +67,15 @@ class _CompiledTruthRewrite(BaseModel):
     compiled_truth: str
 
 
+class QuestionAnswer(BaseModel):
+    """Structured answer generated from retrieved brain pages."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    answer: str = Field(..., min_length=1)
+    sources: list[str] = Field(default_factory=list)
+
+
 def extract_signal(text: str) -> SignalExtraction:
     """Extract structured signals from text using the configured LLM."""
     from brain.pipeline.signal_detect import SignalExtraction
@@ -96,6 +106,13 @@ def rewrite_compiled_truth(
     )
     data = _request_structured_json(prompt)
     return _CompiledTruthRewrite.model_validate(data).compiled_truth
+
+
+def answer_question(query: str, pages: list[dict[str, Any]]) -> QuestionAnswer:
+    """Answer a user question using only retrieved brain page evidence."""
+    prompt = build_question_answer_prompt(query, pages)
+    data = _request_structured_json(prompt)
+    return QuestionAnswer.model_validate(data)
 
 
 def _request_structured_json(prompt: str) -> Any:
