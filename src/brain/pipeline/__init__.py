@@ -1,6 +1,16 @@
 from brain.pipeline.autolink import extract_backlinks
 from brain.pipeline.conflict import Decision, classify_fact
 from brain.pipeline.ingest import IngestReport, ingest
+from brain.pipeline.lint import (
+    LintIssue,
+    LintKind,
+    LintRunReport,
+    lint_citations,
+    lint_contradictions,
+    lint_orphans,
+    lint_stale,
+    run_lint,
+)
 from brain.pipeline.resolve import resolve_entity
 from brain.pipeline.review import (
     ReviewAction,
@@ -21,6 +31,9 @@ from brain.pipeline.tier import TierProposal, check_tier_upgrade
 __all__ = [
     "Decision",
     "IngestReport",
+    "LintIssue",
+    "LintKind",
+    "LintRunReport",
     "ReviewAction",
     "ReviewApplyReport",
     "ReviewDecision",
@@ -37,8 +50,13 @@ __all__ = [
     "detect_signal",
     "extract_backlinks",
     "ingest",
+    "lint_citations",
+    "lint_contradictions",
+    "lint_orphans",
+    "lint_stale",
     "list_pending",
     "parse_review_file",
     "resolve_entity",
     "resolve_review_path",
+    "run_lint",
 ]
