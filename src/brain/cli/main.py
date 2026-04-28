@@ -1,8 +1,11 @@
+from pathlib import Path
 from typing import Annotated
 
 import typer
 
 from brain import __version__
+from brain.cli.init import init_brain
+from brain.exceptions import BrainError
 
 app = typer.Typer(add_completion=False, help="Personal memory system CLI.")
 
@@ -32,3 +35,30 @@ def main(
 def version() -> None:
     """Show the installed brain version."""
     typer.echo(__version__)
+
+
+@app.command("init")
+def init_command(
+    root: Annotated[
+        Path,
+        typer.Option(
+            "--root",
+            help="Brain repository root to initialize.",
+        ),
+    ] = Path("~/brain"),
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Remove existing root contents before initialization.",
+        ),
+    ] = False,
+) -> None:
+    """Initialize an empty brain repository."""
+    try:
+        init_brain(root, force=force)
+    except BrainError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Initialized brain repository at {Path(root).expanduser().resolve()}")
