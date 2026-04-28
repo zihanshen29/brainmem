@@ -52,6 +52,8 @@ Key files:
 
 GITIGNORE_TEMPLATE = """brain.log
 *.tmp
+*.db-wal
+*.db-shm
 """
 
 GITATTRIBUTES_TEMPLATE = """* text=auto eol=lf
