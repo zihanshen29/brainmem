@@ -1,9 +1,11 @@
+from brain.models.backlink import Backlink
 from brain.models.entity import Entity, EntityAlias, EntityAliasSource, EntityType
 from brain.models.event import Event, EventKind
 from brain.models.fact import Fact, FactCandidate, FactObjectType
 from brain.models.page import Frontmatter, Page, PageType, Tier
 
 __all__ = [
+    "Backlink",
     "Entity",
     "EntityAlias",
     "EntityAliasSource",

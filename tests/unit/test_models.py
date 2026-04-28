@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from brain.models import (
+    Backlink,
     Entity,
     EntityAlias,
     EntityAliasSource,
@@ -128,9 +129,31 @@ def test_entity_alias_round_trip() -> None:
     assert_round_trip(alias)
 
 
+def test_backlink_round_trip() -> None:
+    backlink = Backlink(
+        from_page="cv-coursework",
+        to_entity="zhang-san",
+        relation="works_with",
+        line_number=12,
+        extracted_at=utc_datetime(),
+    )
+
+    assert_round_trip(backlink)
+
+
 @pytest.mark.parametrize(
     ("model_class", "valid_data", "missing_field"),
     [
+        (
+            Backlink,
+            {
+                "from_page": "cv-coursework",
+                "to_entity": "zhang-san",
+                "relation": "works_with",
+                "extracted_at": utc_datetime(),
+            },
+            "to_entity",
+        ),
         (
             Event,
             {
