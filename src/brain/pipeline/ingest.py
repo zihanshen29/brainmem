@@ -146,23 +146,27 @@ def ingest(
     source: str = "all",
     dry_run: bool = False,
     limit: int | None = None,
+    event_id: str | None = None,
+    auto_commit: bool | None = None,
 ) -> IngestReport:
     """Run the core ingest pipeline for laundry files and/or ledger events."""
     if source not in VALID_SOURCES:
         raise IngestError(f"Unsupported ingest source: {source}")
     if limit is not None and limit < 0:
         raise IngestError("limit must be non-negative")
+    if event_id is not None and source not in {"events", "all"}:
+        raise IngestError("event_id can only be used with events or all source")
 
     paths = BrainPaths(Path(brain_root))
     config = load_config(paths.config_path)
     report = IngestReport(dry_run=dry_run)
 
     if dry_run:
-        return _run_dry_ingest(paths, source, limit, report)
+        return _run_dry_ingest(paths, source, limit, report, event_id=event_id)
 
     conn = _connect_for_ingest(paths.db_path, dry_run=dry_run)
     try:
-        items = _collect_items(paths, conn, source, limit)
+        items = _collect_items(paths, conn, source, limit, event_id=event_id)
         review_writer = ReviewWriter.create(paths, report)
 
         for item in items:
@@ -185,7 +189,7 @@ def ingest(
                 if not dry_run and item.source == "events":
                     _set_cursor(conn, "events", item.event.id)
 
-        _finalize_run(conn, paths, config, report)
+        _finalize_run(conn, paths, config, report, auto_commit=auto_commit)
     finally:
         _close_ingest_connection(conn, paths.db_path)
 
@@ -197,8 +201,10 @@ def _run_dry_ingest(
     source: str,
     limit: int | None,
     report: IngestReport,
+    *,
+    event_id: str | None = None,
 ) -> IngestReport:
-    items = _collect_dry_items(paths, source, limit)
+    items = _collect_dry_items(paths, source, limit, event_id=event_id)
     for item in items:
         try:
             _detect_item_signal(item)
@@ -213,12 +219,14 @@ def _collect_items(
     conn: sqlite3.Connection,
     source: str,
     limit: int | None,
+    *,
+    event_id: str | None = None,
 ) -> list[IngestItem]:
     items: list[IngestItem] = []
     if source in {"laundry", "all"}:
         items.extend(_collect_laundry_items(paths))
     if source in {"events", "all"}:
-        items.extend(_collect_event_items(paths, conn))
+        items.extend(_collect_event_items(paths, conn, event_id=event_id))
 
     if limit is None:
         return items
@@ -229,12 +237,14 @@ def _collect_dry_items(
     paths: BrainPaths,
     source: str,
     limit: int | None,
+    *,
+    event_id: str | None = None,
 ) -> list[IngestItem]:
     items: list[IngestItem] = []
     if source in {"laundry", "all"}:
         items.extend(_collect_laundry_items(paths))
     if source in {"events", "all"}:
-        items.extend(_collect_event_items_without_cursor(paths))
+        items.extend(_collect_event_items_without_cursor(paths, event_id=event_id))
 
     if limit is None:
         return items
@@ -282,11 +292,18 @@ def _is_unprocessed_laundry_file(paths: BrainPaths, path: Path) -> bool:
     return not relative.parts or relative.parts[0] != paths.laundry_processed_dir.name
 
 
-def _collect_event_items(paths: BrainPaths, conn: sqlite3.Connection) -> list[IngestItem]:
+def _collect_event_items(
+    paths: BrainPaths,
+    conn: sqlite3.Connection,
+    *,
+    event_id: str | None = None,
+) -> list[IngestItem]:
     last_processed = _get_cursor(conn, "events")
     items: list[IngestItem] = []
     for event in read_all(paths.events_jsonl):
-        if last_processed is not None and event.id <= last_processed:
+        if event_id is not None and event.id != event_id:
+            continue
+        if event_id is None and last_processed is not None and event.id <= last_processed:
             continue
         if event.kind is EventKind.LAUNDRY_INGESTED:
             continue
@@ -302,9 +319,15 @@ def _collect_event_items(paths: BrainPaths, conn: sqlite3.Connection) -> list[In
     return items
 
 
-def _collect_event_items_without_cursor(paths: BrainPaths) -> list[IngestItem]:
+def _collect_event_items_without_cursor(
+    paths: BrainPaths,
+    *,
+    event_id: str | None = None,
+) -> list[IngestItem]:
     items: list[IngestItem] = []
     for event in read_all(paths.events_jsonl):
+        if event_id is not None and event.id != event_id:
+            continue
         if event.kind is EventKind.LAUNDRY_INGESTED:
             continue
         text = _event_text(paths.root, event)
@@ -811,6 +834,8 @@ def _finalize_run(
     paths: BrainPaths,
     config: Config,
     report: IngestReport,
+    *,
+    auto_commit: bool | None = None,
 ) -> None:
     with conn:
         _rebuild_touched_backlinks(conn, paths, report.pages_touched)
@@ -826,7 +851,8 @@ def _finalize_run(
         ),
     )
 
-    if config.git.auto_commit:
+    should_commit = config.git.auto_commit if auto_commit is None else auto_commit
+    if should_commit:
         _checkpoint_db(conn)
         from brain import git_ops
 

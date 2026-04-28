@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from brain.exceptions import LLMError
 from brain.llm import client as llm_client
-from brain.llm.client import ConflictJudgment
+from brain.llm.client import ConflictJudgment, PromotedChatDraft
 from brain.models.entity import EntityType
 from brain.models.fact import Fact, FactCandidate, FactObjectType
 from brain.models.page import PageType
@@ -205,6 +205,58 @@ def test_answer_question_schema_invalid_preserves_validation_error(
 
     with pytest.raises(ValidationError):
         llm_client.answer_question("What is Alice doing?", [])
+
+
+def test_promote_chat_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    prompts: list[str] = []
+
+    def fake_extract(prompt: str) -> dict[str, str]:
+        prompts.append(prompt)
+        return {
+            "title": "Architecture Review",
+            "compiled_truth": "The chat captured a durable architecture decision.",
+            "timeline_description": "Captured an architecture decision.",
+        }
+
+    monkeypatch.setattr(llm_client, "_extract_impl", fake_extract)
+
+    result = llm_client.promote_chat(
+        "User: Raw conversation content.",
+        title_hint="Hint Title",
+        slug_hint="hint-slug",
+    )
+
+    assert result == PromotedChatDraft(
+        title="Architecture Review",
+        compiled_truth="The chat captured a durable architecture decision.",
+        timeline_description="Captured an architecture decision.",
+    )
+    assert "Return only valid JSON" in prompts[0]
+    assert "User: Raw conversation content." in prompts[0]
+    assert "Hint Title" in prompts[0]
+    assert "hint-slug" in prompts[0]
+
+
+def test_promote_chat_invalid_json_raises_llm_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(llm_client, "_extract_impl", lambda prompt: "{not valid json")
+
+    with pytest.raises(LLMError):
+        llm_client.promote_chat("User: Raw conversation content.")
+
+
+def test_promote_chat_schema_invalid_preserves_validation_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        llm_client,
+        "_extract_impl",
+        lambda prompt: {"title": "Missing required fields"},
+    )
+
+    with pytest.raises(ValidationError):
+        llm_client.promote_chat("User: Raw conversation content.")
 
 
 def test_api_exception_retries_once_then_wraps(monkeypatch: pytest.MonkeyPatch) -> None:

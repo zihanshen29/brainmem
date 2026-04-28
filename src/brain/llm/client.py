@@ -13,6 +13,7 @@ from brain.exceptions import ConfigError, LLMError
 from brain.llm.prompts import (
     build_compiled_truth_prompt,
     build_conflict_prompt,
+    build_promote_chat_prompt,
     build_question_answer_prompt,
     build_signal_extraction_prompt,
 )
@@ -76,6 +77,16 @@ class QuestionAnswer(BaseModel):
     sources: list[str] = Field(default_factory=list)
 
 
+class PromotedChatDraft(BaseModel):
+    """Structured draft for a promoted AI chat conversation page."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(..., min_length=1)
+    compiled_truth: str = Field(..., min_length=1)
+    timeline_description: str = Field(..., min_length=1)
+
+
 def extract_signal(text: str) -> SignalExtraction:
     """Extract structured signals from text using the configured LLM."""
     from brain.pipeline.signal_detect import SignalExtraction
@@ -113,6 +124,17 @@ def answer_question(query: str, pages: list[dict[str, Any]]) -> QuestionAnswer:
     prompt = build_question_answer_prompt(query, pages)
     data = _request_structured_json(prompt)
     return QuestionAnswer.model_validate(data)
+
+
+def promote_chat(
+    raw_text: str,
+    title_hint: str | None = None,
+    slug_hint: str | None = None,
+) -> PromotedChatDraft:
+    """Draft a conversation page from raw AI chat text using the configured LLM."""
+    prompt = build_promote_chat_prompt(raw_text, title_hint=title_hint, slug_hint=slug_hint)
+    data = _request_structured_json(prompt)
+    return PromotedChatDraft.model_validate(data)
 
 
 def _request_structured_json(prompt: str) -> Any:

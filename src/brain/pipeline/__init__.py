@@ -12,6 +12,7 @@ from brain.pipeline.lint import (
     lint_stale,
     run_lint,
 )
+from brain.pipeline.promote_chat import PromoteChatReport, promote_chat
 from brain.pipeline.resolve import resolve_entity
 from brain.pipeline.review import (
     ReviewAction,
@@ -38,6 +39,7 @@ __all__ = [
     "LintIssue",
     "LintKind",
     "LintRunReport",
+    "PromoteChatReport",
     "ReviewAction",
     "ReviewApplyReport",
     "ReviewDecision",
@@ -61,6 +63,7 @@ __all__ = [
     "lint_stale",
     "list_pending",
     "parse_review_file",
+    "promote_chat",
     "resolve_entity",
     "resolve_review_path",
     "run_lint",

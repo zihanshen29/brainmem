@@ -78,3 +78,30 @@ def build_question_answer_prompt(query: str, pages: list[dict[str, Any]]) -> str
             json.dumps(payload, ensure_ascii=False, sort_keys=True),
         ]
     )
+
+
+def build_promote_chat_prompt(
+    raw_text: str,
+    title_hint: str | None = None,
+    slug_hint: str | None = None,
+) -> str:
+    """Build the prompt for turning raw AI chat text into a conversation page draft."""
+    payload = {
+        "raw_text": raw_text,
+        "title_hint": title_hint,
+        "slug_hint": slug_hint,
+    }
+    return "\n".join(
+        [
+            "Promote the raw AI chat into a durable conversation memory page draft.",
+            "Use the hints when they are provided, but do not invent unsupported facts.",
+            JSON_ONLY_INSTRUCTIONS,
+            "Return an object with keys: title, compiled_truth, timeline_description.",
+            "title must be concise and human-readable.",
+            "compiled_truth must summarize the stable useful content from the chat.",
+            "timeline_description must be one single-line sentence describing the promoted chat.",
+            "",
+            "Conversation evidence JSON:",
+            json.dumps(payload, ensure_ascii=False, sort_keys=True),
+        ]
+    )
