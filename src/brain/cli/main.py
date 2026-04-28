@@ -6,10 +6,12 @@ import typer
 from brain import __version__
 from brain.cli.ingest import ingest_command
 from brain.cli.init import init_brain
+from brain.cli.review import review_command
 from brain.exceptions import BrainError
 
 app = typer.Typer(add_completion=False, help="Personal memory system CLI.")
 app.command("ingest")(ingest_command)
+app.command("review")(review_command)
 
 
 def _print_version(value: bool) -> None:

@@ -56,6 +56,12 @@ REVIEW_KINDS = {
     "tier_proposal",
     "new_entity_review",
 }
+REVIEW_DECISION_SECTION = """## Decision
+
+[ ] approve
+[ ] reject
+[ ] defer
+"""
 
 class IngestReport(BaseModel):
     """Summary of one ingest run."""
@@ -127,7 +133,7 @@ class ReviewWriter:
                 "",
             ]
         )
-        _write_lf(path, metadata + body.strip() + "\n")
+        _write_lf(path, metadata + _with_decision_section(body))
 
         relative = path.relative_to(self.paths.root).as_posix()
         self.report.review_items_created += 1
@@ -977,3 +983,10 @@ def _write_lf(path: Path, text: str) -> None:
     if not normalized.endswith("\n"):
         normalized += "\n"
     path.write_text(normalized, encoding="utf-8", newline="\n")
+
+
+def _with_decision_section(body: str) -> str:
+    stripped = body.strip()
+    if "## Decision" in stripped:
+        return f"{stripped}\n"
+    return f"{stripped}\n\n{REVIEW_DECISION_SECTION}"

@@ -179,6 +179,10 @@ def test_conflicting_fact_creates_fact_conflict_review(
     assert "fact_conflict" in review_text
     assert "designer" in review_text
     assert "engineer" in review_text
+    assert "## Decision" in review_text
+    assert "[ ] approve" in review_text
+    assert "[ ] reject" in review_text
+    assert "[ ] defer" in review_text
 
 
 def test_dry_run_does_not_write_db_files_archive_events_cursor_or_git(
