@@ -10,7 +10,6 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from brain.cli.init import init_brain
 from brain.cli.main import app
 from brain.exceptions import BrainError
 from brain.ledger import append_event, read_all
@@ -26,18 +25,6 @@ SECOND_ULID = "01KQA8VZMXBAV7AKF5JFB4KQ9C"
 THIRD_ULID = "01KQA8XSH0AW2F2C5DB2N4MK9J"
 
 runner = CliRunner()
-
-
-@pytest.fixture(autouse=True)
-def isolated_git_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
-
-
-@pytest.fixture()
-def brain_root(tmp_path: Path) -> Path:
-    root = tmp_path / "brain"
-    init_brain(root)
-    return root
 
 
 def test_promote_chat_pipeline_creates_conversation_page_event_ingest_and_commit(

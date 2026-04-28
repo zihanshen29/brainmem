@@ -12,7 +12,6 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from brain.cli.init import init_brain
 from brain.cli.main import app
 from brain.db.connection import connect
 from brain.db.facts import add_fact
@@ -36,18 +35,6 @@ VALID_ULID = "01KQA8R9KVCG906A0203VYEQF7"
 SECOND_ULID = "01KQA8VZMXBAV7AKF5JFB4KQ9C"
 
 runner = CliRunner()
-
-
-@pytest.fixture(autouse=True)
-def isolated_git_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
-
-
-@pytest.fixture()
-def brain_root(tmp_path: Path) -> Path:
-    root = tmp_path / "brain"
-    init_brain(root)
-    return root
 
 
 def test_laundry_ingest_persists_fact_page_timeline_archive_and_cursor(

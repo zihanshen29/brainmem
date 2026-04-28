@@ -23,11 +23,6 @@ ALLY_EVENT = "01KQA8VZMXBAV7AKF5JFB4KQ9C"
 PROJECT_EVENT = "01KQA8YFYZZKK3KVCB3E2YQ2ZW"
 
 
-@pytest.fixture(autouse=True)
-def isolated_git_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
-
-
 @pytest.fixture()
 def brain_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "brain"

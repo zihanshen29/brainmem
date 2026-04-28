@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -9,22 +8,9 @@ import frontmatter
 import pytest
 from typer.testing import CliRunner
 
-from brain.cli.init import init_brain
 from brain.cli.main import app
 
 runner = CliRunner()
-
-
-@pytest.fixture(autouse=True)
-def isolated_git_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
-
-
-@pytest.fixture()
-def brain_root(tmp_path: Path) -> Path:
-    root = tmp_path / "brain"
-    init_brain(root)
-    return root
 
 
 def test_cli_capture_stdin_writes_laundry_frontmatter_body_path_and_output(

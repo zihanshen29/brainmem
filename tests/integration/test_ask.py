@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -15,11 +14,6 @@ from brain.models import Frontmatter, Page, PageType, Tier
 from brain.pages import write_page
 
 runner = CliRunner()
-
-
-@pytest.fixture(autouse=True)
-def isolated_git_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
 
 
 @pytest.fixture()

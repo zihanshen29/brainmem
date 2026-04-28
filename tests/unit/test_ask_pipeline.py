@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -27,11 +26,6 @@ from brain.pipeline.ask import ask
 VALID_ULID = "01KQA8R9KVCG906A0203VYEQF7"
 SECOND_ULID = "01KQA8VZMXBAV7AKF5JFB4KQ9C"
 OLD_ZHANG_ALIAS = "\N{CJK UNIFIED IDEOGRAPH-8001}\N{CJK UNIFIED IDEOGRAPH-5F20}"
-
-
-@pytest.fixture(autouse=True)
-def isolated_git_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
 
 
 @pytest.fixture()

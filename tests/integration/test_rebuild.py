@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,7 +9,6 @@ import pytest
 from typer.testing import CliRunner
 
 import brain.pipeline.rebuild as rebuild_pipeline
-from brain.cli.init import init_brain
 from brain.cli.main import app
 from brain.db.backlinks import replace_backlinks_for_page
 from brain.db.connection import connect
@@ -25,18 +23,6 @@ from brain.pages import parse_page, write_page
 
 runner = CliRunner()
 VALID_ULID = "01KQA8R9KVCG906A0203VYEQF7"
-
-
-@pytest.fixture(autouse=True)
-def isolated_git_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
-
-
-@pytest.fixture()
-def brain_root(tmp_path: Path) -> Path:
-    root = tmp_path / "brain"
-    init_brain(root)
-    return root
 
 
 def test_cli_rebuild_db_recreates_queryable_entities_aliases_backlinks_and_summary(
