@@ -13,6 +13,13 @@ from brain.pipeline.lint import (
     run_lint,
 )
 from brain.pipeline.promote_chat import PromoteChatReport, promote_chat
+from brain.pipeline.rebuild import (
+    RebuildReport,
+    rebuild_backlinks,
+    rebuild_db,
+    rebuild_index,
+    rebuild_pages,
+)
 from brain.pipeline.resolve import resolve_entity
 from brain.pipeline.review import (
     ReviewAction,
@@ -40,6 +47,7 @@ __all__ = [
     "LintKind",
     "LintRunReport",
     "PromoteChatReport",
+    "RebuildReport",
     "ReviewAction",
     "ReviewApplyReport",
     "ReviewDecision",
@@ -64,6 +72,10 @@ __all__ = [
     "list_pending",
     "parse_review_file",
     "promote_chat",
+    "rebuild_backlinks",
+    "rebuild_db",
+    "rebuild_index",
+    "rebuild_pages",
     "resolve_entity",
     "resolve_review_path",
     "run_lint",

@@ -9,6 +9,7 @@ from brain.cli.ingest import ingest_command
 from brain.cli.init import init_brain
 from brain.cli.lint import lint_command
 from brain.cli.promote_chat import promote_chat_command
+from brain.cli.rebuild import rebuild_command
 from brain.cli.review import review_command
 from brain.exceptions import BrainError
 
@@ -17,6 +18,7 @@ app.command("ask")(ask_command)
 app.command("ingest")(ingest_command)
 app.command("lint")(lint_command)
 app.command("promote-chat")(promote_chat_command)
+app.command("rebuild")(rebuild_command)
 app.command("review")(review_command)
 
 
