@@ -6,6 +6,8 @@
 
 核心心智模型：**LLM 是 compiler，原始素材是 source code，知识库是 compiled artifact**。系统不是一个聊天机器人，是一个**手动触发的编译管线 + 本地查询接口**。普通 `mem ask` 不调用外部模型；`mem ingest`、`mem ask --explain`、`mem promote-chat` 等命令可能调用配置的 LLM。
 
+Provider 说明：原始 spec 的心智模型来自 Claude/Anthropic 生态，但当前实现不绑定单一厂商。Phase 1 支持 DeepSeek、OpenAI-compatible/OpenAI SDK 路径和 Anthropic provider；默认配置与无 `config.toml` 回退都使用 DeepSeek。用户可以通过 `config.toml` 的 `[deepseek]`、`[openai]`、`[anthropic]` 段和对应环境变量切换 provider，文档示例只写环境变量名，不写真实 key。
+
 ## 这不是什么
 
 - 不是常驻 agent。所有处理都由用户手动触发命令完成。

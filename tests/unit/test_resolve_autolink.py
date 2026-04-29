@@ -86,6 +86,37 @@ def test_resolve_ascii_name_creates_entity(conn: sqlite3.Connection) -> None:
     assert get_entity(conn, "brain-dump") == resolved
 
 
+def test_resolve_ascii_name_without_hint_creates_person_entity_page(
+    conn: sqlite3.Connection,
+) -> None:
+    resolved = resolve_entity(conn, "xiaozhang", None)
+
+    assert resolved is not None
+    assert resolved.id == "xiaozhang"
+    assert resolved.type is EntityType.PERSON
+    assert resolved.page_path == "pages/entities/xiaozhang.md"
+
+
+@pytest.mark.parametrize(
+    ("hint_type", "expected_page_path"),
+    [
+        (EntityType.CONCEPT, "pages/concepts/memory.md"),
+        (EntityType.PROJECT, "pages/projects/memory.md"),
+        (EntityType.EVENT, "pages/events/memory.md"),
+    ],
+)
+def test_resolve_ascii_name_with_page_type_hint_uses_specialized_page_path(
+    conn: sqlite3.Connection,
+    hint_type: EntityType,
+    expected_page_path: str,
+) -> None:
+    resolved = resolve_entity(conn, "Memory", hint_type)
+
+    assert resolved is not None
+    assert resolved.type is hint_type
+    assert resolved.page_path == expected_page_path
+
+
 def test_resolve_existing_slug_updates_mention(conn: sqlite3.Connection) -> None:
     upsert_entity(conn, sample_entity("brain-dump", "Brain Dump", EntityType.PROJECT))
 

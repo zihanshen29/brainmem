@@ -46,6 +46,10 @@ def _page_path_for_entity(entity_id: str, entity_type: EntityType | None) -> str
     return f"pages/entities/{entity_id}.md"
 
 
+def _entity_type_for_hint(hint_type: EntityType | None) -> EntityType:
+    return hint_type or EntityType.PERSON
+
+
 def resolve_entity(
     conn: sqlite3.Connection,
     name: str,
@@ -76,11 +80,12 @@ def resolve_entity(
         return _touch_entity(conn, compact_match)
 
     now = _now_utc()
+    entity_type = _entity_type_for_hint(hint_type)
     entity = Entity(
         id=slug,
-        type=hint_type or EntityType.CONCEPT,
+        type=entity_type,
         title=name,
-        page_path=_page_path_for_entity(slug, hint_type),
+        page_path=_page_path_for_entity(slug, entity_type),
         tier=Tier.TIER_3,
         mention_count=1,
         first_seen=now,

@@ -120,6 +120,7 @@ class ReviewApplyReport(BaseModel):
     tier_proposal_id: int | None = None
     entity_id: str | None = None
     pages_touched: list[str] = Field(default_factory=list)
+    follow_ups: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
 
 
@@ -135,6 +136,7 @@ class ReviewBatchReport(BaseModel):
     archived: int = 0
     skipped: int = 0
     reports: list[ReviewApplyReport] = Field(default_factory=list)
+    follow_ups: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
 
 
@@ -213,27 +215,26 @@ def parse_review_file(path: Path) -> ReviewDecision:
 def apply_pending(brain_root: Path, kind: str | ReviewKind | None = None) -> ReviewBatchReport:
     """Apply all pending review files that have a selected decision."""
     paths = BrainPaths(Path(brain_root))
+    kind_filter = _coerce_kind(kind) if kind is not None else None
     batch = ReviewBatchReport()
     conn = connect(paths.db_path)
     try:
-        for item in list_pending(paths.root, kind=kind):
-            report = apply_decision(conn, parse_review_file(item.path))
-            batch.reports.append(report)
-            batch.errors.extend(report.errors)
+        for path in sorted(paths.review_dir.glob("*.md")):
+            try:
+                item = _read_review_item(path)
+            except Exception as exc:
+                _add_batch_report(batch, _failed_review_report(path, exc))
+                continue
+            if item.status is not ReviewStatus.PENDING:
+                continue
+            if kind_filter is not None and item.kind is not kind_filter:
+                continue
 
-            if report.applied:
-                batch.applied += 1
-                if report.action is ReviewAction.APPROVE:
-                    batch.approved += 1
-                elif report.action is ReviewAction.REJECT:
-                    batch.rejected += 1
-                if report.archived_path is not None:
-                    batch.archived += 1
-            elif report.action is ReviewAction.DEFER:
-                batch.deferred += 1
-
-            if report.skipped or report.errors:
-                batch.skipped += 1
+            try:
+                report = apply_decision(conn, parse_review_file(item.path))
+            except Exception as exc:
+                report = _failed_review_report(item.path, exc, item=item)
+            _add_batch_report(batch, report)
     finally:
         _checkpoint_and_close(conn)
         _remove_sqlite_sidecars(paths.db_path)
@@ -241,6 +242,50 @@ def apply_pending(brain_root: Path, kind: str | ReviewKind | None = None) -> Rev
     if batch.applied > 0:
         _auto_commit(paths, batch.applied)
     return batch
+
+
+def _add_batch_report(batch: ReviewBatchReport, report: ReviewApplyReport) -> None:
+    batch.reports.append(report)
+    batch.errors.extend(report.errors)
+    batch.follow_ups.extend(report.follow_ups)
+
+    if report.applied:
+        batch.applied += 1
+        if report.action is ReviewAction.APPROVE:
+            batch.approved += 1
+        elif report.action is ReviewAction.REJECT:
+            batch.rejected += 1
+        if report.archived_path is not None:
+            batch.archived += 1
+    elif report.action is ReviewAction.DEFER:
+        batch.deferred += 1
+
+    if report.skipped or report.errors:
+        batch.skipped += 1
+
+
+def _failed_review_report(
+    path: Path,
+    exc: Exception,
+    *,
+    item: ReviewItem | None = None,
+) -> ReviewApplyReport:
+    report = ReviewApplyReport(
+        review_id=item.review_id if item is not None else Path(path).stem,
+        kind=item.kind if item is not None else _safe_kind_from_path(path),
+        action=ReviewAction.NONE,
+        path=Path(path),
+        skipped=True,
+    )
+    report.errors.append(f"{Path(path).name}: {exc}")
+    return report
+
+
+def _safe_kind_from_path(path: Path) -> ReviewKind:
+    try:
+        return _coerce_kind(_kind_from_review_id(Path(path).stem))
+    except Exception:
+        return ReviewKind.INGEST_ERROR
 
 
 def apply_decision(conn: sqlite3.Connection, decision: ReviewDecision) -> ReviewApplyReport:
@@ -421,10 +466,9 @@ def _approve_pending_fact(
             report.facts_added.append(int(fact_id))
         report.pages_touched.extend(ingest_report.pages_touched)
         report.entity_id = normalized.subject
-        if ingest_report.review_files and not report.facts_added:
-            report.errors.extend(
-                f"Pending fact produced review item: {path}" for path in ingest_report.review_files
-            )
+        report.follow_ups.extend(
+            f"Pending fact produced review item: {path}" for path in ingest_report.review_files
+        )
         _record_review_event(paths, decision, "approved", report)
 
     from brain.pages import append_log, regenerate_index
@@ -976,9 +1020,11 @@ def _add_alias_if_missing(conn: sqlite3.Connection, alias: str, entity_id: str) 
 
 
 def _review_source_ref(paths: BrainPaths, path: Path) -> str:
+    root = paths.root.resolve()
+    review_path = Path(path).resolve()
     with suppress(ValueError):
-        return path.relative_to(paths.root).as_posix()
-    return path.as_posix()
+        return review_path.relative_to(root).as_posix()
+    return f"external_review:{Path(path).name}"
 
 
 def _string_data(decision: ReviewDecision, key: str) -> str | None:

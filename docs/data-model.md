@@ -11,7 +11,7 @@
 ├── config.toml              # 配置（API key 引用、阈值等）
 ├── brain.db                 # SQLite 主库
 ├── events.jsonl             # 事件账本（append-only）
-├── CLAUDE.md                # 给 LLM 看的 schema 说明（参考 Karpathy 模式）
+├── CLAUDE.md                # 给 LLM 看的 schema 说明（文件名沿用 Claude/LLM Wiki 习惯，不表示只支持 Anthropic）
 ├── README.md                # 给用户看的简介
 ├── .gitignore
 ├── .gitattributes           # 强制 LF 换行
@@ -41,11 +41,26 @@
 
 ## 2. config.toml
 
+当前实现支持多 provider。`mem init` 默认只写入 `[deepseek]`，无 `config.toml` 时 LLM client 也默认 DeepSeek。配置文件可以保留一个或多个 provider 段；自动选择优先级是 `deepseek` > `openai` > `anthropic`。API key 只通过环境变量读取，`config.toml` 里只存变量名。
+
 ```toml
+[deepseek]
+api_key_env = "DEEPSEEK_API_KEY"     # 从环境变量读 key，不存文件
+base_url = "https://api.deepseek.com"
+model = "deepseek-v4-pro"            # 用于 extract / judgment / rewrite 调用
+fast_model = "deepseek-v4-flash"     # 用于轻量任务
+
+# 可选：OpenAI 官方接口。DeepSeek 等 OpenAI-compatible provider 走 [deepseek] + base_url。
+[openai]
+api_key_env = "OPENAI_API_KEY"
+model = "gpt-5.5"
+fast_model = "gpt-5.4-mini"
+
+# 可选：Anthropic provider。保留用于 Claude 生态兼容，不是唯一支持路径。
 [anthropic]
-api_key_env = "ANTHROPIC_API_KEY"   # 从环境变量读 key，不存文件
-model = "claude-opus-4-7"            # 用于 extract / judgment 调用
-fast_model = "claude-haiku-4-5"      # 用于轻量任务（auto-link 备选、简单分类）
+api_key_env = "ANTHROPIC_API_KEY"
+model = "claude-3-5-haiku-latest"
+fast_model = "claude-3-5-haiku-latest"
 
 [paths]
 brain_root = "~/brain"               # 用户可改

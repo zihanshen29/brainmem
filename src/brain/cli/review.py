@@ -33,6 +33,8 @@ def review_command(
                 raise BrainError("Cannot combine a review id with --apply")
             report = apply_pending(root, kind=kind)
             typer.echo(_format_apply_report(report))
+            for follow_up in _list_value(report, "follow_ups"):
+                typer.echo(f"- follow-up: {follow_up}")
             for error in _list_value(report, "errors"):
                 typer.echo(f"- {error}", err=True)
             return
@@ -148,6 +150,9 @@ def _format_apply_report(report: Any) -> str:
     errors = _list_value(report, "errors")
     if errors:
         parts.append(f"errors={len(errors)}")
+    follow_ups = _list_value(report, "follow_ups")
+    if follow_ups:
+        parts.append(f"follow_ups={len(follow_ups)}")
     if len(parts) == 1:
         parts.append(str(report))
     return " ".join(parts)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import sqlite3
@@ -30,6 +31,7 @@ from brain.models import (
     Tier,
 )
 from brain.pages import parse_page, write_page
+from brain.paths import BrainPaths
 
 try:
     from brain.pipeline import review as review_pipeline
@@ -175,6 +177,51 @@ def test_apply_low_confidence_approve_inserts_candidate_fact(brain_root: Path) -
 
 
 @requires_review_pipeline
+def test_apply_pending_isolates_bad_review_and_continues(brain_root: Path) -> None:
+    bad_path = _write_review(
+        brain_root,
+        "2026-04-28_001_low_confidence_fact",
+        "low_confidence_fact",
+        _low_confidence_body(_candidate()),
+    )
+    bad_path.write_text(
+        "\n".join(
+            [
+                "---",
+                "review_id: 2026-04-28_001_low_confidence_fact",
+                "kind: low_confidence_fact",
+                "status: pending",
+                "---",
+                "",
+                "# Bad review",
+                "",
+                "[x] launch",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+    _write_review(
+        brain_root,
+        "2026-04-28_002_low_confidence_fact",
+        "low_confidence_fact",
+        _low_confidence_body(_candidate(object_value="artist")),
+        checked="approve",
+    )
+
+    report = apply_pending(brain_root)
+
+    facts = _rows(brain_root, "SELECT * FROM facts")
+    assert report.applied == 1
+    assert report.skipped == 1
+    assert len(report.errors) == 1
+    assert "2026-04-28_001_low_confidence_fact.md" in report.errors[0]
+    assert facts[0]["object"] == "artist"
+    assert _archived_review(brain_root, "2026-04-28_002_low_confidence_fact.md").exists()
+
+
+@requires_review_pipeline
 def test_apply_new_entity_then_pending_fact_adds_fact_and_page(brain_root: Path) -> None:
     _write_review(
         brain_root,
@@ -229,6 +276,39 @@ def test_apply_new_entity_then_pending_fact_adds_fact_and_page(brain_root: Path)
     assert page.frontmatter.type is PageType.ENTITY
     assert _archived_review(brain_root, "2026-04-28_001_new_entity_review.md").exists()
     assert _archived_review(brain_root, "2026-04-28_002_pending_fact.md").exists()
+
+
+@requires_review_pipeline
+def test_pending_fact_follow_up_review_is_not_error(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _insert_entity_and_page(brain_root)
+    _write_review(
+        brain_root,
+        "2026-04-28_001_pending_fact",
+        "pending_fact",
+        _pending_fact_body(_candidate()),
+        checked="approve",
+    )
+
+    def fake_handle_candidate(**kwargs: Any) -> None:
+        report = kwargs["report"]
+        report.review_files.append("review/2026-04-28_002_fact_conflict.md")
+
+    ingest_pipeline = importlib.import_module("brain.pipeline.ingest")
+    monkeypatch.setattr(ingest_pipeline, "_handle_candidate", fake_handle_candidate)
+    monkeypatch.setattr(ingest_pipeline, "_rebuild_touched_backlinks", lambda *args: None)
+
+    report = apply_pending(brain_root)
+
+    assert report.applied == 1
+    assert report.skipped == 0
+    assert report.errors == []
+    assert report.follow_ups == [
+        "Pending fact produced review item: review/2026-04-28_002_fact_conflict.md"
+    ]
+    assert report.reports[0].follow_ups == report.follow_ups
 
 
 @requires_review_pipeline
@@ -318,6 +398,22 @@ def test_unsupported_new_entity_approve_reports_error(brain_root: Path) -> None:
     assert "requires slug or merge_into" in report.errors[0]
 
 
+@requires_review_pipeline
+def test_review_source_ref_external_path_does_not_leak_absolute_path(
+    brain_root: Path,
+    tmp_path: Path,
+) -> None:
+    external = tmp_path / "outside" / "review" / "2026-04-28_001_low_confidence_fact.md"
+    external.parent.mkdir(parents=True)
+    external.write_text("", encoding="utf-8")
+
+    source_ref = review_pipeline._review_source_ref(BrainPaths(brain_root), external)
+
+    assert source_ref == "external_review:2026-04-28_001_low_confidence_fact.md"
+    assert str(external.parent) not in source_ref
+    assert not Path(source_ref).is_absolute()
+
+
 def test_cli_review_lists_pending_items_and_filters_kind(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -368,7 +464,15 @@ def test_cli_review_apply_scans_pending_and_passes_kind_filter(
 
     def fake_apply_pending(root: Path, *, kind: str | None = None) -> SimpleNamespace:
         calls.append((root, kind))
-        return SimpleNamespace(applied=2, approved=1, rejected=1, deferred=0, skipped=3, errors=[])
+        return SimpleNamespace(
+            applied=2,
+            approved=1,
+            rejected=1,
+            deferred=0,
+            skipped=3,
+            follow_ups=["review/2026-04-28_003_fact_conflict.md"],
+            errors=[],
+        )
 
     monkeypatch.setattr(review_cli, "apply_pending", fake_apply_pending)
     monkeypatch.chdir(tmp_path)
@@ -383,6 +487,8 @@ def test_cli_review_apply_scans_pending_and_passes_kind_filter(
     assert "rejected=1" in result.stdout
     assert "deferred=0" in result.stdout
     assert "skipped=3" in result.stdout
+    assert "follow_ups=1" in result.stdout
+    assert "review/2026-04-28_003_fact_conflict.md" in result.stdout
 
 
 @requires_review_pipeline

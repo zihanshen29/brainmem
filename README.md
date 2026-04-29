@@ -29,7 +29,7 @@ It is local-first by default: your runtime brain root stays on your machine. LLM
 | Runtime state | SQLite schema for entities, facts, backlinks, reviews, lint results, and tier proposals |
 | Event ledger | Append-only JSONL event log with cursor-based ingest |
 | CLI workflow | `init`, `capture`, `ingest`, `review`, `lint`, `ask`, `rebuild`, `status`, `promote-chat`, `entity` |
-| LLM support | DeepSeek V4 by default, with OpenAI and Anthropic-compatible config support |
+| LLM support | DeepSeek V4 by default; configurable DeepSeek/OpenAI-compatible, OpenAI, or Anthropic provider |
 | Privacy boundary | Plain `mem ask` is local retrieval; `mem ingest` and `mem ask --explain` can call the configured LLM |
 
 ## Quick Start
@@ -70,6 +70,8 @@ $env:DEEPSEEK_API_KEY = "<your-deepseek-api-key>"
 mem ingest --source laundry
 mem ask "What changed recently?" --explain
 ```
+
+`mem init` writes a DeepSeek config by default. Advanced users can edit `config.toml` to use `[deepseek]` for DeepSeek or another OpenAI-compatible endpoint, `[openai]` for OpenAI, or `[anthropic]` for Anthropic. Store only environment variable names in config; keep real API keys in the environment.
 
 ## Data Layout
 

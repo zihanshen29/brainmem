@@ -53,7 +53,7 @@ dev = [
 ]
 ```
 
-**不要加** 的依赖（这些是 Phase 2 才需要的）：
+**Phase 1 暂不加入** 的依赖（这些是 Phase 2 才需要的）。`openai` 已经是 Phase 1 依赖，因为 DeepSeek 和其他 OpenAI-compatible provider 通过 OpenAI SDK 调用；保留它：
 - chromadb / qdrant-client / faiss-cpu
 - networkx / neo4j（Phase 1 不上图谱）
 - sentence-transformers
@@ -209,7 +209,13 @@ content = page_path.read_text()  # Windows 默认可能是 cp1252
 
 ## 5. LLM provider and API keys
 
-默认 provider 是 DeepSeek V4，兼容 OpenAI 和 Anthropic 配置。Provider 选择优先级为：`deepseek` > `openai` > `anthropic`。`mem init` 写入 DeepSeek 默认配置。
+默认 provider 是 DeepSeek V4。实现支持三条路径：
+
+- `[deepseek]`：默认路径，使用 OpenAI SDK 的 chat completions 接口和可配置 `base_url`，用于 DeepSeek / OpenAI-compatible provider。
+- `[openai]`：OpenAI 官方接口，使用 OpenAI SDK responses 接口。
+- `[anthropic]`：Anthropic 官方接口，用于 Claude 模型兼容。
+
+Provider 选择优先级为：`deepseek` > `openai` > `anthropic`。`mem init` 写入 DeepSeek 默认配置；没有 `config.toml` 时，LLM client 也回退到 DeepSeek 默认环境变量和模型名。
 
 **不要硬编码 API key**。从环境变量读，`config.toml` 里只放变量名：
 
@@ -220,16 +226,23 @@ base_url = "https://api.deepseek.com"
 model = "deepseek-v4-pro"
 fast_model = "deepseek-v4-flash"
 
-[openai]
+[openai]  # optional: OpenAI official API
 api_key_env = "OPENAI_API_KEY"
 model = "gpt-5.5"
 fast_model = "gpt-5.4-mini"
 
-[anthropic]
+[anthropic]  # optional: Anthropic official API
 api_key_env = "ANTHROPIC_API_KEY"
 model = "claude-3-5-haiku-latest"
 fast_model = "claude-3-5-haiku-latest"
 ```
+
+环境变量边界：
+
+- DeepSeek 默认读取 `DEEPSEEK_API_KEY`，模型可用 `BRAIN_DEEPSEEK_MODEL` / `DEEPSEEK_MODEL` 和 `BRAIN_DEEPSEEK_FAST_MODEL` / `DEEPSEEK_FAST_MODEL` 覆盖，base URL 可用 `BRAIN_DEEPSEEK_BASE_URL` / `DEEPSEEK_BASE_URL` 覆盖。
+- OpenAI 读取 `OPENAI_API_KEY`，模型可用 `BRAIN_OPENAI_MODEL` / `OPENAI_MODEL` 和 `BRAIN_OPENAI_FAST_MODEL` / `OPENAI_FAST_MODEL` 覆盖。
+- Anthropic 读取 `ANTHROPIC_API_KEY`，模型可用 `BRAIN_ANTHROPIC_MODEL` / `ANTHROPIC_MODEL` 和 `BRAIN_ANTHROPIC_FAST_MODEL` / `ANTHROPIC_FAST_MODEL` 覆盖。
+- `BRAIN_CONFIG` 可指向显式配置文件；否则当前工作目录下的 `config.toml` 优先于默认回退。
 
 ```python
 import os
