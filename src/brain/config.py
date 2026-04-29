@@ -26,6 +26,17 @@ class OpenAIConfig(BaseModel):
     fast_model: str = Field(..., min_length=1)
 
 
+class DeepSeekConfig(BaseModel):
+    """DeepSeek model, endpoint, and key reference settings."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    api_key_env: str = Field(..., min_length=1)
+    model: str = Field(..., min_length=1)
+    fast_model: str = Field(..., min_length=1)
+    base_url: str = Field(..., min_length=1)
+
+
 class PathsConfig(BaseModel):
     """User-configurable filesystem paths."""
 
@@ -82,6 +93,7 @@ class Config(BaseModel):
 
     openai: OpenAIConfig | None = None
     anthropic: AnthropicConfig | None = None
+    deepseek: DeepSeekConfig | None = None
     paths: PathsConfig
     ingest: IngestConfig
     tier: TierConfig
@@ -91,7 +103,7 @@ class Config(BaseModel):
     @model_validator(mode="after")
     def require_llm_provider(self) -> "Config":
         """Require at least one configured LLM provider."""
-        if self.openai is None and self.anthropic is None:
+        if self.openai is None and self.anthropic is None and self.deepseek is None:
             raise ValueError("At least one LLM provider config is required")
         return self
 

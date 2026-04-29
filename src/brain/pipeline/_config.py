@@ -3,10 +3,10 @@ from pathlib import Path
 
 from brain.config import (
     Config,
+    DeepSeekConfig,
     GitConfig,
     IngestConfig,
     LintConfig,
-    OpenAIConfig,
     PathsConfig,
     TierConfig,
     load_config,
@@ -44,10 +44,11 @@ def _load_or_default(path: Path) -> Config:
 def default_pipeline_config() -> Config:
     """Build the fallback config used by isolated pipeline unit tests."""
     return Config(
-        openai=OpenAIConfig(
-            api_key_env="OPENAI_API_KEY",
-            model="gpt-5.5",
-            fast_model="gpt-5.4-mini",
+        deepseek=DeepSeekConfig(
+            api_key_env="DEEPSEEK_API_KEY",
+            base_url="https://api.deepseek.com",
+            model="deepseek-v4-pro",
+            fast_model="deepseek-v4-flash",
         ),
         paths=PathsConfig(brain_root=Path.cwd()),
         ingest=IngestConfig(

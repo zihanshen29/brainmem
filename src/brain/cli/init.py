@@ -166,10 +166,11 @@ def _write_seed_files(paths: BrainPaths) -> None:
 
 def _config_text(root: Path) -> str:
     root_value = json.dumps(root.as_posix())
-    return f"""[openai]
-api_key_env = "OPENAI_API_KEY"
-model = "gpt-5.5"
-fast_model = "gpt-5.4-mini"
+    return f"""[deepseek]
+api_key_env = "DEEPSEEK_API_KEY"
+base_url = "https://api.deepseek.com"
+model = "deepseek-v4-pro"
+fast_model = "deepseek-v4-flash"
 
 [paths]
 brain_root = {root_value}

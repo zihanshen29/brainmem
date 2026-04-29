@@ -125,10 +125,48 @@ auto_commit = true
 """.strip()
 
 
+def deepseek_config_text(root: Path) -> str:
+    return f"""
+[deepseek]
+api_key_env = "CUSTOM_DEEPSEEK_API_KEY"
+base_url = "https://api.deepseek.com/custom"
+model = "deepseek-config-pro"
+fast_model = "deepseek-config-flash"
+
+[openai]
+api_key_env = "CUSTOM_OPENAI_API_KEY"
+model = "gpt-config-model"
+fast_model = "gpt-config-fast-model"
+
+[anthropic]
+api_key_env = "CUSTOM_ANTHROPIC_API_KEY"
+model = "claude-config-model"
+fast_model = "claude-fast-model"
+
+[paths]
+brain_root = "{root.as_posix()}"
+
+[ingest]
+confidence_auto_accept = 0.85
+confidence_auto_reject = 0.50
+
+[tier]
+tier3_threshold = 1
+tier2_threshold = 3
+tier1_threshold = 8
+
+[lint]
+stale_days = 90
+
+[git]
+auto_commit = true
+""".strip()
+
+
 def test_extract_signal_happy_path_returns_signal_extraction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(llm_client, "_extract_impl", lambda prompt: signal_payload())
+    monkeypatch.setattr(llm_client, "_extract_impl", lambda prompt, use_fast=False: signal_payload())
 
     result = llm_client.extract_signal("Zihan is in the US.")
 
@@ -139,7 +177,7 @@ def test_extract_signal_happy_path_returns_signal_extraction(
 
 
 def test_extract_signal_invalid_json_raises_llm_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(llm_client, "_extract_impl", lambda prompt: "{not valid json")
+    monkeypatch.setattr(llm_client, "_extract_impl", lambda prompt, use_fast=False: "{not valid json")
 
     with pytest.raises(LLMError):
         llm_client.extract_signal("Zihan is in the US.")
@@ -148,7 +186,11 @@ def test_extract_signal_invalid_json_raises_llm_error(monkeypatch: pytest.Monkey
 def test_extract_signal_schema_invalid_preserves_validation_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(llm_client, "_extract_impl", lambda prompt: {"facts": [{"subject": ""}]})
+    monkeypatch.setattr(
+        llm_client,
+        "_extract_impl",
+        lambda prompt, use_fast=False: {"facts": [{"subject": ""}]},
+    )
 
     with pytest.raises(ValidationError):
         llm_client.extract_signal("Zihan is in the US.")
@@ -158,7 +200,7 @@ def test_judge_conflict_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         llm_client,
         "_extract_impl",
-        lambda prompt: (
+        lambda prompt, use_fast=False: (
             '{"is_conflict": true, "new_supersedes_old": true, '
             '"reason": "newer location", "confidence": 0.91}'
         ),
@@ -178,7 +220,7 @@ def test_rewrite_compiled_truth_happy_path(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(
         llm_client,
         "_extract_impl",
-        lambda prompt: {"compiled_truth": "Zihan is currently in the US."},
+        lambda prompt, use_fast=False: {"compiled_truth": "Zihan is currently in the US."},
     )
     timeline = [
         TimelineEntry(
@@ -196,7 +238,7 @@ def test_rewrite_compiled_truth_happy_path(monkeypatch: pytest.MonkeyPatch) -> N
 def test_answer_question_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     prompts: list[str] = []
 
-    def fake_extract(prompt: str) -> dict[str, object]:
+    def fake_extract(prompt: str, use_fast: bool = False) -> dict[str, object]:
         prompts.append(prompt)
         return {
             "answer": "Alice maintains Brain and is working on the ask CLI.",
@@ -226,7 +268,7 @@ def test_answer_question_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_answer_question_invalid_json_raises_llm_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(llm_client, "_extract_impl", lambda prompt: "{not valid json")
+    monkeypatch.setattr(llm_client, "_extract_impl", lambda prompt, use_fast=False: "{not valid json")
 
     with pytest.raises(LLMError):
         llm_client.answer_question("What is Alice doing?", [])
@@ -235,7 +277,7 @@ def test_answer_question_invalid_json_raises_llm_error(
 def test_answer_question_schema_invalid_preserves_validation_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(llm_client, "_extract_impl", lambda prompt: {"sources": []})
+    monkeypatch.setattr(llm_client, "_extract_impl", lambda prompt, use_fast=False: {"sources": []})
 
     with pytest.raises(ValidationError):
         llm_client.answer_question("What is Alice doing?", [])
@@ -244,7 +286,7 @@ def test_answer_question_schema_invalid_preserves_validation_error(
 def test_promote_chat_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     prompts: list[str] = []
 
-    def fake_extract(prompt: str) -> dict[str, str]:
+    def fake_extract(prompt: str, use_fast: bool = False) -> dict[str, str]:
         prompts.append(prompt)
         return {
             "title": "Architecture Review",
@@ -274,7 +316,7 @@ def test_promote_chat_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_promote_chat_invalid_json_raises_llm_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(llm_client, "_extract_impl", lambda prompt: "{not valid json")
+    monkeypatch.setattr(llm_client, "_extract_impl", lambda prompt, use_fast=False: "{not valid json")
 
     with pytest.raises(LLMError):
         llm_client.promote_chat("User: Raw conversation content.")
@@ -286,7 +328,7 @@ def test_promote_chat_schema_invalid_preserves_validation_error(
     monkeypatch.setattr(
         llm_client,
         "_extract_impl",
-        lambda prompt: {"title": "Missing required fields"},
+        lambda prompt, use_fast=False: {"title": "Missing required fields"},
     )
 
     with pytest.raises(ValidationError):
@@ -296,7 +338,7 @@ def test_promote_chat_schema_invalid_preserves_validation_error(
 def test_api_exception_retries_once_then_wraps(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = 0
 
-    def fail(prompt: str) -> dict[str, str]:
+    def fail(prompt: str, use_fast: bool = False) -> dict[str, str]:
         nonlocal calls
         calls += 1
         raise RuntimeError("api unavailable")
@@ -308,6 +350,43 @@ def test_api_exception_retries_once_then_wraps(monkeypatch: pytest.MonkeyPatch) 
 
     assert calls == 2
     assert isinstance(exc_info.value.__cause__, RuntimeError)
+
+
+def test_public_helpers_route_fast_and_pro_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[bool] = []
+    responses: list[dict[str, object]] = [
+        signal_payload(),
+        {
+            "answer": "Alice maintains Brain.",
+            "sources": ["alice"],
+        },
+        {
+            "is_conflict": True,
+            "new_supersedes_old": True,
+            "reason": "newer location",
+            "confidence": 0.91,
+        },
+        {"compiled_truth": "Zihan is currently in the US."},
+        {
+            "title": "Architecture Review",
+            "compiled_truth": "The chat captured a durable architecture decision.",
+            "timeline_description": "Captured an architecture decision.",
+        },
+    ]
+
+    def fake_extract(prompt: str, use_fast: bool = False) -> dict[str, object]:
+        calls.append(use_fast)
+        return responses.pop(0)
+
+    monkeypatch.setattr(llm_client, "_extract_impl", fake_extract)
+
+    llm_client.extract_signal("Zihan is in the US.")
+    llm_client.answer_question("What is Alice doing?", [])
+    llm_client.judge_conflict(sample_fact(), sample_candidate())
+    llm_client.rewrite_compiled_truth([], None)
+    llm_client.promote_chat("User: Raw conversation content.")
+
+    assert calls == [True, True, False, False, False]
 
 
 def test_anthropic_settings_read_model_and_key_from_config(
@@ -325,20 +404,21 @@ def test_anthropic_settings_read_model_and_key_from_config(
     assert settings.api_key == "secret-key"
 
 
-def test_llm_settings_default_to_openai_without_config(
+def test_llm_settings_default_to_deepseek_without_config(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv(llm_client.BRAIN_CONFIG_ENV, raising=False)
-    monkeypatch.setenv("OPENAI_API_KEY", "openai-secret")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-secret")
 
     settings = llm_client._resolve_llm_settings()
 
-    assert settings.provider == "openai"
-    assert settings.model == "gpt-5.5"
-    assert settings.fast_model == "gpt-5.4-mini"
-    assert settings.api_key == "openai-secret"
+    assert settings.provider == "deepseek"
+    assert settings.model == "deepseek-v4-pro"
+    assert settings.fast_model == "deepseek-v4-flash"
+    assert settings.base_url == "https://api.deepseek.com"
+    assert settings.api_key == "deepseek-secret"
 
 
 def test_llm_settings_prefer_openai_config_over_anthropic(
@@ -357,6 +437,26 @@ def test_llm_settings_prefer_openai_config_over_anthropic(
     assert settings.model == "gpt-config-model"
     assert settings.fast_model == "gpt-config-fast-model"
     assert settings.api_key == "openai-config-secret"
+
+
+def test_llm_settings_prefer_deepseek_config_over_openai_and_anthropic(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(deepseek_config_text(tmp_path / "brain"), encoding="utf-8", newline="\n")
+    monkeypatch.setenv(llm_client.BRAIN_CONFIG_ENV, str(config_path))
+    monkeypatch.setenv("CUSTOM_DEEPSEEK_API_KEY", "deepseek-config-secret")
+    monkeypatch.setenv("CUSTOM_OPENAI_API_KEY", "openai-config-secret")
+    monkeypatch.setenv("CUSTOM_ANTHROPIC_API_KEY", "anthropic-config-secret")
+
+    settings = llm_client._resolve_llm_settings()
+
+    assert settings.provider == "deepseek"
+    assert settings.model == "deepseek-config-pro"
+    assert settings.fast_model == "deepseek-config-flash"
+    assert settings.base_url == "https://api.deepseek.com/custom"
+    assert settings.api_key == "deepseek-config-secret"
 
 
 def test_llm_settings_fall_back_to_anthropic_config(
@@ -387,6 +487,30 @@ def test_llm_settings_invalid_config_raises_llm_error(
 api_key_env = ""
 model = "gpt-config-model"
 fast_model = "gpt-config-fast-model"
+""".strip(),
+        encoding="utf-8",
+        newline="\n",
+    )
+    monkeypatch.setenv(llm_client.BRAIN_CONFIG_ENV, str(config_path))
+
+    with pytest.raises(LLMError) as exc_info:
+        llm_client._resolve_llm_settings()
+
+    assert isinstance(exc_info.value.__cause__, ConfigError)
+
+
+def test_llm_settings_deepseek_only_incomplete_config_raises_config_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[deepseek]
+api_key_env = "CUSTOM_DEEPSEEK_API_KEY"
+base_url = "https://api.deepseek.com"
+model = "deepseek-config-pro"
+fast_model = "deepseek-config-flash"
 """.strip(),
         encoding="utf-8",
         newline="\n",
@@ -434,3 +558,93 @@ def test_extract_impl_dispatches_to_openai_responses_create(
             "max_output_tokens": llm_client.MAX_OUTPUT_TOKENS,
         },
     ]
+
+
+def test_extract_impl_dispatches_to_deepseek_chat_completions_create(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(deepseek_config_text(tmp_path / "brain"), encoding="utf-8", newline="\n")
+    monkeypatch.setenv(llm_client.BRAIN_CONFIG_ENV, str(config_path))
+    monkeypatch.setenv("CUSTOM_DEEPSEEK_API_KEY", "deepseek-config-secret")
+    calls: list[dict[str, object]] = []
+
+    class FakeChatCompletions:
+        def create(self, **kwargs: object) -> object:
+            calls.append(kwargs)
+            return types.SimpleNamespace(
+                choices=[
+                    types.SimpleNamespace(
+                        message=types.SimpleNamespace(content='{"ok": true}'),
+                    )
+                ]
+            )
+
+    class FakeChat:
+        def __init__(self) -> None:
+            self.completions = FakeChatCompletions()
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs: object) -> None:
+            calls.append({"client_kwargs": kwargs})
+            self.chat = FakeChat()
+
+    fake_openai = types.ModuleType("openai")
+    fake_openai.OpenAI = FakeOpenAI
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+
+    result = llm_client._extract_impl("Return JSON.", use_fast=True)
+
+    assert result == '{"ok": true}'
+    assert calls == [
+        {
+            "client_kwargs": {
+                "api_key": "deepseek-config-secret",
+                "base_url": "https://api.deepseek.com/custom",
+            }
+        },
+        {
+            "model": "deepseek-config-flash",
+            "messages": [{"role": "user", "content": "Return JSON."}],
+            "response_format": {"type": "json_object"},
+            "max_tokens": llm_client.MAX_OUTPUT_TOKENS,
+            "stream": False,
+        },
+    ]
+
+
+def test_extract_impl_deepseek_uses_pro_model_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(deepseek_config_text(tmp_path / "brain"), encoding="utf-8", newline="\n")
+    monkeypatch.setenv(llm_client.BRAIN_CONFIG_ENV, str(config_path))
+    calls: list[dict[str, object]] = []
+
+    class FakeChatCompletions:
+        def create(self, **kwargs: object) -> object:
+            calls.append(kwargs)
+            return types.SimpleNamespace(
+                choices=[
+                    types.SimpleNamespace(
+                        message=types.SimpleNamespace(content='{"ok": true}'),
+                    )
+                ]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs: object) -> None:
+            self.chat = types.SimpleNamespace(
+                completions=FakeChatCompletions(),
+            )
+
+    fake_openai = types.ModuleType("openai")
+    fake_openai.OpenAI = FakeOpenAI
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+
+    result = llm_client._extract_impl("Return JSON.")
+
+    assert result == '{"ok": true}'
+    assert calls[0]["model"] == "deepseek-config-pro"

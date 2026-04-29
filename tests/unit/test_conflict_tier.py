@@ -6,10 +6,10 @@ import pytest
 
 from brain.config import (
     Config,
+    DeepSeekConfig,
     GitConfig,
     IngestConfig,
     LintConfig,
-    OpenAIConfig,
     PathsConfig,
     TierConfig,
 )
@@ -48,10 +48,11 @@ def utc_datetime(day: int = 28) -> datetime:
 
 def make_config(auto_accept: float = 0.85, auto_reject: float = 0.50) -> Config:
     return Config(
-        openai=OpenAIConfig(
-            api_key_env="OPENAI_API_KEY",
-            model="gpt-5.5",
-            fast_model="gpt-5.4-mini",
+        deepseek=DeepSeekConfig(
+            api_key_env="DEEPSEEK_API_KEY",
+            base_url="https://api.deepseek.com",
+            model="deepseek-v4-pro",
+            fast_model="deepseek-v4-flash",
         ),
         paths=PathsConfig(brain_root=Path.cwd()),
         ingest=IngestConfig(

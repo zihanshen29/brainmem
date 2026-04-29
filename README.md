@@ -41,10 +41,10 @@ To capture a note into the current brain root:
 "Remember to review the Phase 1 closeout notes." | mem capture --stdin
 ```
 
-New brain roots use OpenAI by default. Set the API key before commands that call the LLM, such as real ingest, review tier rewrites, `ask --explain`, and promote-chat:
+New brain roots use DeepSeek V4 Pro and Flash by default. Set the API key before commands that call the LLM, such as real ingest, review tier rewrites, `ask --explain`, and promote-chat:
 
 ```powershell
-$env:OPENAI_API_KEY = "sk-..."
+$env:DEEPSEEK_API_KEY = "sk-..."
 ```
 
 `mem ingest --dry-run` does not write pages, update the database, or commit changes, but it may still call the configured LLM when there is pending content.

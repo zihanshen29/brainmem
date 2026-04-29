@@ -52,11 +52,13 @@ def test_init_creates_files_dirs_db_and_initial_commit(tmp_path: Path) -> None:
     assert "*.jsonl text eol=lf" in (root / ".gitattributes").read_text(encoding="utf-8")
     config = load_config(root / "config.toml")
     assert config.paths.brain_root == root.resolve()
-    assert config.openai is not None
-    assert config.openai.api_key_env == "OPENAI_API_KEY"
-    assert config.openai.model == "gpt-5.5"
-    assert config.openai.fast_model == "gpt-5.4-mini"
+    assert config.openai is None
     assert config.anthropic is None
+    assert config.deepseek is not None
+    assert config.deepseek.api_key_env == "DEEPSEEK_API_KEY"
+    assert config.deepseek.base_url == "https://api.deepseek.com"
+    assert config.deepseek.model == "deepseek-v4-pro"
+    assert config.deepseek.fast_model == "deepseek-v4-flash"
     assert _db_user_version(root / "brain.db") == 1
     assert _git_log_messages(root) == ["Initialize brain repository"]
 
