@@ -160,7 +160,7 @@ def _write_ask_pages(root: Path) -> None:
             timeline=[
                 "- 2026-04-26 [event:01KQA8R9KVCG906A0203VYEQF7]: Brain ask scope was defined."
             ],
-            sources=["files/cli.md"],
+            sources=["docs/cli.md"],
         ),
     )
 

@@ -23,9 +23,9 @@
 4. **`pipeline.md`** —— ingest / review / lint 算法
 5. **`cli.md`** —— 用户接口规范
 6. **`tech-stack.md`** —— Python 项目结构、依赖、Windows 注意事项、测试方针
-7. **`phase-1-tasks.md`** —— **按这个顺序执行构建**
+7. 代码实现位于 `src/brain/`，测试位于 `tests/`。
 
-读完之后，从 `phase-1-tasks.md` 第一个任务开始。每完成一个任务运行对应测试，通过后再进下一个。
+读完之后，从 `README.md` 的 Quick Start 开始运行本地验证，再按需要阅读具体设计文档。
 
 ## Phase 1 范围
 

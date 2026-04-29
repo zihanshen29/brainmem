@@ -76,7 +76,7 @@ mem ask "What changed recently?" --explain
 ```text
 brainmem/
   src/brain/           Python package
-  files/               Phase 1 specs and planning docs
+  docs/                Specs and design docs
   tests/               Test suite
   pyproject.toml       Packaging and dependencies
 
@@ -127,10 +127,9 @@ Latest local result: `207 passed`, `ruff` passed.
 
 ## Specs
 
-- [SPEC.md](files/SPEC.md)
-- [architecture.md](files/architecture.md)
-- [data-model.md](files/data-model.md)
-- [pipeline.md](files/pipeline.md)
-- [cli.md](files/cli.md)
-- [tech-stack.md](files/tech-stack.md)
-- [phase-1-tasks.md](files/phase-1-tasks.md)
+- [SPEC.md](docs/SPEC.md)
+- [architecture.md](docs/architecture.md)
+- [data-model.md](docs/data-model.md)
+- [pipeline.md](docs/pipeline.md)
+- [cli.md](docs/cli.md)
+- [tech-stack.md](docs/tech-stack.md)

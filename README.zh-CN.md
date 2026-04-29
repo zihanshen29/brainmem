@@ -76,7 +76,7 @@ mem ask "What changed recently?" --explain
 ```text
 brainmem/
   src/brain/           Python 包
-  files/               Phase 1 规格和设计文档
+  docs/                规格和设计文档
   tests/               测试
   pyproject.toml       打包和依赖配置
 
@@ -127,10 +127,9 @@ brain-root/            本地运行数据，不要发布到 GitHub
 
 ## 规格文档
 
-- [SPEC.md](files/SPEC.md)
-- [architecture.md](files/architecture.md)
-- [data-model.md](files/data-model.md)
-- [pipeline.md](files/pipeline.md)
-- [cli.md](files/cli.md)
-- [tech-stack.md](files/tech-stack.md)
-- [phase-1-tasks.md](files/phase-1-tasks.md)
+- [SPEC.md](docs/SPEC.md)
+- [architecture.md](docs/architecture.md)
+- [data-model.md](docs/data-model.md)
+- [pipeline.md](docs/pipeline.md)
+- [cli.md](docs/cli.md)
+- [tech-stack.md](docs/tech-stack.md)

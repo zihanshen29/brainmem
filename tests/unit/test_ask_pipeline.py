@@ -114,7 +114,7 @@ def _seed_pages(root: Path) -> None:
                 f"- 2026-04-27 [event:{VALID_ULID}]: Computer vision baseline was planned.",
                 f"- 2026-04-28 [event:{SECOND_ULID}]: [[zhang-san]] reviewed the computer vision plan.",
             ],
-            sources=["files/cli.md"],
+            sources=["docs/cli.md"],
         ),
     )
     _write_page(
