@@ -21,6 +21,7 @@ def build_signal_extraction_prompt(text: str) -> str:
             "Entity type must be one of person, org, concept, project, event, place, or null.",
             "Entity metadata must always be a JSON object; use {} when there is no metadata, never null.",
             "Fact object_type must be one of entity, literal, date, number.",
+            "Do not use semantic labels such as person, org, place, location, concept, or project as fact object_type; use entity when the object is an entity-like thing.",
             "For each fact, subject should be a lowercase ASCII slug when possible.",
             "If the input contains a Hint JSON with source_event or source_ref, copy those exact values into every fact.",
             "If no durable facts are present, return an empty facts array but still return entities and timeline_summary.",

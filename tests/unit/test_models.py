@@ -103,6 +103,33 @@ def test_fact_candidate_round_trip() -> None:
     assert_round_trip(candidate)
 
 
+@pytest.mark.parametrize(
+    ("raw_object_type", "expected"),
+    [
+        ("place", FactObjectType.ENTITY),
+        ("concept", FactObjectType.ENTITY),
+        ("organization", FactObjectType.ENTITY),
+        ("string", FactObjectType.LITERAL),
+        ("datetime", FactObjectType.DATE),
+        ("integer", FactObjectType.NUMBER),
+    ],
+)
+def test_fact_candidate_normalizes_llm_object_type_aliases(
+    raw_object_type: str,
+    expected: FactObjectType,
+) -> None:
+    candidate = FactCandidate(
+        subject="zihan",
+        predicate="interview_location",
+        object="london",
+        object_type=raw_object_type,
+        source_event=VALID_ULID,
+        confidence=0.8,
+    )
+
+    assert candidate.object_type is expected
+
+
 def test_entity_round_trip() -> None:
     entity = Entity(
         id="zhang-san",
