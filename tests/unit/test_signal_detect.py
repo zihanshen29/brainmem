@@ -99,3 +99,14 @@ def test_signal_entity_rejects_unknown_fields() -> None:
             confidence=0.93,
             unexpected=True,
         )
+
+
+def test_signal_entity_normalizes_null_metadata() -> None:
+    entity = SignalEntity(
+        name="Alice",
+        type=EntityType.PERSON,
+        confidence=0.93,
+        metadata=None,
+    )
+
+    assert entity.metadata == {}

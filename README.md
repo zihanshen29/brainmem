@@ -55,7 +55,7 @@ After a real ingest and review flow has populated `pages/`, query the brain root
 mem ask "What should I review?"
 ```
 
-Task 20 manual smoke has not been executed yet.
+Task 20 manual smoke passed on 2026-04-29 using a temporary brain root and the DeepSeek V4 provider.
 
 ## Directory Structure
 
@@ -95,8 +95,9 @@ brain-root/
 
 ## Quality / Verification
 
-- `.\.venv\Scripts\pytest.exe`: 200 passed.
+- `.\.venv\Scripts\pytest.exe`: 207 passed.
 - `.\.venv\Scripts\ruff.exe check .`: passed.
+- Real DeepSeek smoke: `mem init`, `mem capture`, `mem ingest`, `mem review --apply`, `mem ask`, `mem lint --all`, and `mem status` passed in a temporary brain root.
 
 No open questions were found during Task 19 closeout, so `OPEN_QUESTIONS.md` was not created.
 
@@ -122,4 +123,4 @@ No open questions were found during Task 19 closeout, so `OPEN_QUESTIONS.md` was
 - Task 17: complete
 - Task 18: complete
 - Task 19: complete
-- Task 20: incomplete, pending manual smoke
+- Task 20: complete

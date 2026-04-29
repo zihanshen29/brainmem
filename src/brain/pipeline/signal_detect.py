@@ -1,7 +1,7 @@
 import json
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from brain.models.entity import EntityType
 from brain.models.fact import FactCandidate
@@ -17,6 +17,14 @@ class SignalEntity(BaseModel):
     type: EntityType | None = None
     confidence: float = Field(..., ge=0.0, le=1.0)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("metadata", mode="before")
+    @classmethod
+    def normalize_empty_metadata(cls, value: Any) -> dict[str, Any]:
+        """Treat LLM null metadata as an empty metadata object."""
+        if value is None:
+            return {}
+        return value
 
 
 class SignalExtraction(BaseModel):
