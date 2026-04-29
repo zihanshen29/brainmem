@@ -1,109 +1,134 @@
-# Brain
+# BrainMem
 
-Brain is a local-first personal memory system backed by a markdown knowledge base and SQLite runtime state.
+<p align="center">
+  <strong>Local-first memory for agents, backed by Markdown and SQLite.</strong>
+</p>
 
-## Installation
+<p align="center">
+  <a href="#english">English</a> · <a href="#中文">中文</a>
+</p>
+
+<p align="center">
+  <img alt="Python 3.11" src="https://img.shields.io/badge/Python-3.11-3776AB">
+  <img alt="CLI mem" src="https://img.shields.io/badge/CLI-mem-111827">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-207%20passed-16A34A">
+  <img alt="Local first" src="https://img.shields.io/badge/local--first-Markdown%20%2B%20SQLite-0F766E">
+</p>
+
+---
+
+<details open>
+<summary id="english"><strong>English</strong></summary>
+
+## What It Is
+
+BrainMem is a personal memory system designed for coding agents and power users. It keeps durable knowledge in an Obsidian-friendly Markdown wiki, uses SQLite for deterministic indexes and decisions, and exposes everything through a `mem` CLI.
+
+It is local-first by default: your runtime brain root stays on your machine. LLM calls are explicit and only happen for commands that need extraction, rewriting, or explanation.
+
+## Highlights
+
+| Area | What BrainMem provides |
+| --- | --- |
+| Knowledge base | Markdown pages with frontmatter, compiled truth, timeline, and sources |
+| Runtime state | SQLite schema for entities, facts, backlinks, reviews, lint results, and tier proposals |
+| Event ledger | Append-only JSONL event log with cursor-based ingest |
+| CLI workflow | `init`, `capture`, `ingest`, `review`, `lint`, `ask`, `rebuild`, `status`, `promote-chat`, `entity` |
+| LLM support | DeepSeek V4 by default, with OpenAI and Anthropic-compatible config support |
+| Privacy boundary | Plain `mem ask` is local retrieval; `mem ingest` and `mem ask --explain` can call the configured LLM |
+
+## Quick Start
 
 Requires Python 3.11.
 
-Windows PowerShell:
-
 ```powershell
+git clone https://github.com/zihanshen29/brainmem.git
+cd brainmem
+
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -e ".[dev]"
-```
 
-macOS/Linux:
-
-```sh
-python3.11 -m venv .venv
-. .venv/bin/activate
-python -m pip install --upgrade pip
-pip install -e ".[dev]"
-```
-
-## Quick Start
-
-API-free validation from the repository root:
-
-```powershell
 mem --version
 mem init --root .\brain-root
 Set-Location .\brain-root
 mem status
 ```
 
-To capture a note into the current brain root:
+Capture a note:
 
 ```powershell
 "Remember to review the Phase 1 closeout notes." | mem capture --stdin
 ```
 
-New brain roots use DeepSeek V4 Pro and Flash by default. Set the API key before commands that call the LLM, such as real ingest, review tier rewrites, `ask --explain`, and promote-chat:
-
-```powershell
-$env:DEEPSEEK_API_KEY = "<your-deepseek-api-key>"
-```
-
-`mem ingest --dry-run` does not write pages, update the database, or commit changes, but it may still call the configured LLM when there is pending content.
-
-After a real ingest and review flow has populated `pages/`, query the brain root with:
+Use local retrieval:
 
 ```powershell
 mem ask "What should I review?"
 ```
 
-Task 20 manual smoke passed on 2026-04-29 using a temporary brain root and the DeepSeek V4 provider.
+Enable LLM-backed workflows:
 
-## Directory Structure
+```powershell
+$env:DEEPSEEK_API_KEY = "<your-deepseek-api-key>"
+mem ingest --source laundry
+mem ask "What changed recently?" --explain
+```
 
-Repository:
+## Data Layout
 
 ```text
-brain/
+brainmem/
   src/brain/           Python package
   files/               Phase 1 specs and planning docs
   tests/               Test suite
-  README.md            Project overview and closeout notes
-  pyproject.toml       Packaging, dependencies, and tool config
-```
+  pyproject.toml       Packaging and dependencies
 
-Runtime brain root:
-
-```text
-brain-root/
+brain-root/            Local runtime data, not for GitHub
   raw/                 Raw captured inputs
   laundry/             Pending ingest material
-  laundry/processed/   Processed ingest material
-  pages/               Markdown memory pages
-  review/              Review queue material
-  brain.db             SQLite database
+  pages/               Markdown wiki pages
+  review/              Pending review queue
+  brain.db             SQLite runtime/index state
   events.jsonl         Append-only event log
 ```
 
-## Privacy And Publishing
+## Privacy
 
-This repository is the application code. Runtime brain roots contain personal memory data and should stay private.
-
-Do not publish or commit:
+Do not commit runtime memory data:
 
 - `brain-root/`
-- `brain.db`, `brain.db-wal`, or `brain.db-shm`
+- `brain.db`, `brain.db-wal`, `brain.db-shm`
 - `events.jsonl`
-- `raw/`, `laundry/`, `pages/`, or `review/`
-- `.env` or any real API key
+- `raw/`, `laundry/`, `pages/`, `review/`
+- `.env` or real API keys
 
-Safe to publish:
+Local-only commands:
 
-- `src/`
-- `tests/`
-- `files/`
-- `pyproject.toml`
-- `.env.example`
+- `mem status`
+- `mem ask "query"` without `--explain`
+- `mem rebuild --backlinks --index`
+- `mem lint --all`
 
-Plain `mem ask` performs local retrieval. `mem ingest`, `mem ask --explain`, `mem promote-chat`, some review apply actions, and forced page rewrites may send user content to the configured LLM provider.
+Commands that may send content to the configured LLM:
+
+- `mem ingest`
+- `mem ask --explain`
+- `mem promote-chat`
+- review apply actions that rewrite compiled truth
+- forced page rebuilds
+
+## Verification
+
+The current Phase 1 build has been checked with:
+
+```powershell
+.\.venv\Scripts\pytest.exe
+.\.venv\Scripts\ruff.exe check .
+```
+
+Latest local result: `207 passed`, `ruff` passed.
 
 ## Specs
 
@@ -115,34 +140,131 @@ Plain `mem ask` performs local retrieval. `mem ingest`, `mem ask --explain`, `me
 - [tech-stack.md](files/tech-stack.md)
 - [phase-1-tasks.md](files/phase-1-tasks.md)
 
-## Quality / Verification
+</details>
 
-- `.\.venv\Scripts\pytest.exe`: 207 passed.
-- `.\.venv\Scripts\ruff.exe check .`: passed.
-- Real DeepSeek smoke: `mem init`, `mem capture`, `mem ingest`, `mem review --apply`, `mem ask`, `mem lint --all`, and `mem status` passed in a temporary brain root.
+---
 
-No open questions were found during Task 19 closeout, so `OPEN_QUESTIONS.md` was not created.
+<details>
+<summary id="中文"><strong>中文</strong></summary>
 
-## Phase 1 Checklist
+## 这是什么
 
-- Task 0: complete
-- Task 1: complete
-- Task 2: complete
-- Task 3: complete
-- Task 4: complete
-- Task 5: complete
-- Task 6: complete
-- Task 7: complete
-- Task 8: complete
-- Task 9: complete
-- Task 10: complete
-- Task 11: complete
-- Task 12: complete
-- Task 13: complete
-- Task 14: complete
-- Task 15: complete
-- Task 16: complete
-- Task 17: complete
-- Task 18: complete
-- Task 19: complete
-- Task 20: complete
+BrainMem 是一个给编程智能体和高频知识工作流使用的个人记忆系统。它把长期知识存成 Obsidian 友好的 Markdown wiki，把确定性索引、事实、实体、review 和 lint 结果存进 SQLite，并通过 `mem` 命令行使用。
+
+默认是 local-first：你的真实知识库目录保留在本机。只有在执行抽取、改写、解释等需要模型的命令时，才会调用外部 LLM。
+
+## 核心能力
+
+| 模块 | 能力 |
+| --- | --- |
+| 知识库 | 带 frontmatter、compiled truth、timeline、sources 的 Markdown 页面 |
+| 运行状态 | SQLite 管理实体、事实、反链、review、lint、tier proposal |
+| 事件账本 | JSONL append-only event ledger，支持 cursor ingest |
+| CLI 工作流 | `init`、`capture`、`ingest`、`review`、`lint`、`ask`、`rebuild`、`status`、`promote-chat`、`entity` |
+| 模型接入 | 默认 DeepSeek V4，也保留 OpenAI / Anthropic 配置兼容 |
+| 隐私边界 | 普通 `mem ask` 是本地检索；`mem ingest` 和 `mem ask --explain` 可能调用外部模型 |
+
+## 快速开始
+
+需要 Python 3.11。
+
+```powershell
+git clone https://github.com/zihanshen29/brainmem.git
+cd brainmem
+
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -e ".[dev]"
+
+mem --version
+mem init --root .\brain-root
+Set-Location .\brain-root
+mem status
+```
+
+捕获一条笔记：
+
+```powershell
+"Remember to review the Phase 1 closeout notes." | mem capture --stdin
+```
+
+本地检索：
+
+```powershell
+mem ask "What should I review?"
+```
+
+启用模型能力：
+
+```powershell
+$env:DEEPSEEK_API_KEY = "<your-deepseek-api-key>"
+mem ingest --source laundry
+mem ask "What changed recently?" --explain
+```
+
+## 数据结构
+
+```text
+brainmem/
+  src/brain/           Python 包
+  files/               Phase 1 规格和设计文档
+  tests/               测试
+  pyproject.toml       打包和依赖配置
+
+brain-root/            本地运行数据，不要发布到 GitHub
+  raw/                 原始输入
+  laundry/             待 ingest 材料
+  pages/               Markdown wiki 页面
+  review/              待确认 review 队列
+  brain.db             SQLite 运行状态和索引
+  events.jsonl         append-only 事件日志
+```
+
+## 隐私说明
+
+不要提交真实记忆数据：
+
+- `brain-root/`
+- `brain.db`、`brain.db-wal`、`brain.db-shm`
+- `events.jsonl`
+- `raw/`、`laundry/`、`pages/`、`review/`
+- `.env` 或真实 API key
+
+本地安全命令：
+
+- `mem status`
+- 不带 `--explain` 的 `mem ask "query"`
+- `mem rebuild --backlinks --index`
+- `mem lint --all`
+
+可能把内容发送给配置模型的命令：
+
+- `mem ingest`
+- `mem ask --explain`
+- `mem promote-chat`
+- 会重写 compiled truth 的 review apply
+- 强制页面重建
+
+## 验证
+
+当前 Phase 1 构建已通过：
+
+```powershell
+.\.venv\Scripts\pytest.exe
+.\.venv\Scripts\ruff.exe check .
+```
+
+最近本地结果：`207 passed`，`ruff` passed。
+
+## 规格文档
+
+- [SPEC.md](files/SPEC.md)
+- [architecture.md](files/architecture.md)
+- [data-model.md](files/data-model.md)
+- [pipeline.md](files/pipeline.md)
+- [cli.md](files/cli.md)
+- [tech-stack.md](files/tech-stack.md)
+- [phase-1-tasks.md](files/phase-1-tasks.md)
+
+</details>
