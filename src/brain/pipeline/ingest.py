@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import sqlite3
+import traceback
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,7 +31,6 @@ from brain.models import (
     Frontmatter,
     Page,
     PageType,
-    Tier,
 )
 from brain.pages import (
     TimelineEntry,
@@ -52,7 +52,9 @@ Source = Literal["laundry", "events", "all"]
 VALID_SOURCES = {"laundry", "events", "all"}
 REVIEW_KINDS = {
     "fact_conflict",
+    "ingest_error",
     "low_confidence_fact",
+    "pending_fact",
     "tier_proposal",
     "new_entity_review",
 }
@@ -187,6 +189,7 @@ def ingest(
             except Exception as exc:
                 report.errors.append(f"{item.source_ref}: {exc}")
                 if not dry_run and item.source == "events":
+                    _write_ingest_error_review(review_writer, item, exc)
                     _set_cursor(conn, "events", item.event.id)
 
         _finalize_run(conn, paths, config, report, auto_commit=auto_commit)
@@ -408,6 +411,9 @@ def _apply_extraction(
         normalized = _normalize_candidate(
             conn=conn,
             candidate=candidate,
+            item=item,
+            timeline_summary=extraction.timeline_summary,
+            suggested_page_type=extraction.suggested_page_type,
             entity_map=entity_map,
             unresolved=unresolved,
             review_writer=review_writer,
@@ -425,6 +431,7 @@ def _apply_extraction(
             review_writer=review_writer,
             report=report,
             result=result,
+            suggested_page_type=extraction.suggested_page_type,
         )
 
     report.processed += 1
@@ -466,10 +473,14 @@ def _unique_signal_entities(signal_entities: list[SignalEntity]) -> list[SignalE
 def _normalize_candidate(
     conn: sqlite3.Connection,
     candidate: FactCandidate,
+    item: IngestItem,
+    timeline_summary: str,
+    suggested_page_type: PageType | None,
     entity_map: dict[str, str],
     unresolved: set[str],
     review_writer: ReviewWriter,
 ) -> FactCandidate | None:
+    unresolved_names: list[str] = []
     subject = _candidate_entity_id(
         conn=conn,
         name=candidate.subject,
@@ -479,6 +490,15 @@ def _normalize_candidate(
         review_writer=review_writer,
     )
     if subject is None:
+        unresolved_names.append(candidate.subject)
+        _write_pending_fact_review(
+            review_writer,
+            candidate,
+            item,
+            timeline_summary,
+            suggested_page_type,
+            unresolved_names,
+        )
         return None
 
     object_value = candidate.object
@@ -492,6 +512,15 @@ def _normalize_candidate(
             review_writer=review_writer,
         )
         if resolved_object is None:
+            unresolved_names.append(candidate.object)
+            _write_pending_fact_review(
+                review_writer,
+                candidate,
+                item,
+                timeline_summary,
+                suggested_page_type,
+                unresolved_names,
+            )
             return None
         object_value = resolved_object
 
@@ -541,6 +570,7 @@ def _handle_candidate(
     review_writer: ReviewWriter,
     report: IngestReport,
     result: ItemResult,
+    suggested_page_type: PageType | None = None,
 ) -> None:
     auto_accept = config.ingest.confidence_auto_accept
     auto_reject = config.ingest.confidence_auto_reject
@@ -582,6 +612,7 @@ def _handle_candidate(
         timeline_summary=timeline_summary,
         report=report,
         result=result,
+        suggested_page_type=suggested_page_type,
     )
 
 
@@ -615,14 +646,17 @@ def _touch_subject_page(
     timeline_summary: str,
     report: IngestReport,
     result: ItemResult,
+    suggested_page_type: PageType | None = None,
 ) -> None:
     entity = get_entity(conn, subject_id)
     if entity is None:
         raise IngestError(f"Cannot touch page for missing entity: {subject_id}")
 
-    page_path = paths.entities_dir / f"{entity.id}.md"
+    page_type = _page_type_for_entity(entity, suggested_page_type)
+    page_path = _page_path_for_entity(paths, entity, page_type)
+    _persist_entity_page_path(conn, paths, entity, page_path)
     if not page_path.exists():
-        _write_stub_page(page_path, entity, source_ref)
+        _write_stub_page(page_path, entity, source_ref, page_type)
     else:
         page = parse_page(page_path)
         if source_ref not in page.sources:
@@ -646,14 +680,67 @@ def _touch_subject_page(
     result.page_slugs.add(entity.id)
 
 
-def _write_stub_page(path: Path, entity: Entity, source_ref: str) -> None:
+def _page_type_for_entity(entity: Entity, suggested_page_type: PageType | None = None) -> PageType:
+    if entity.type is EntityType.PROJECT:
+        return PageType.PROJECT
+    if entity.type is EntityType.CONCEPT:
+        return PageType.CONCEPT
+    if entity.type is EntityType.EVENT:
+        return PageType.EVENT
+    if suggested_page_type is PageType.EXPERIENCE:
+        return PageType.EXPERIENCE
+    return PageType.ENTITY
+
+
+def _page_path_for_entity(paths: BrainPaths, entity: Entity, page_type: PageType) -> Path:
+    if entity.page_path:
+        configured = Path(entity.page_path)
+        candidate = configured if configured.is_absolute() else paths.root / configured
+        if candidate.exists():
+            return candidate
+
+    return _page_dir(paths, page_type) / f"{entity.id}.md"
+
+
+def _page_dir(paths: BrainPaths, page_type: PageType) -> Path:
+    if page_type is PageType.PROJECT:
+        return paths.projects_dir
+    if page_type is PageType.CONCEPT:
+        return paths.concepts_dir
+    if page_type is PageType.EVENT:
+        return paths.events_dir
+    if page_type is PageType.EXPERIENCE:
+        return paths.experiences_dir
+    if page_type is PageType.CONVERSATION:
+        return paths.conversations_dir
+    return paths.entities_dir
+
+
+def _persist_entity_page_path(
+    conn: sqlite3.Connection,
+    paths: BrainPaths,
+    entity: Entity,
+    page_path: Path,
+) -> None:
+    relative = page_path.relative_to(paths.root).as_posix()
+    if entity.page_path == relative:
+        return
+    conn.execute("UPDATE entities SET page_path = ? WHERE id = ?", (relative, entity.id))
+
+
+def _write_stub_page(
+    path: Path,
+    entity: Entity,
+    source_ref: str,
+    page_type: PageType,
+) -> None:
     now = _now_utc()
     page = Page(
         frontmatter=Frontmatter(
-            type=PageType.ENTITY,
+            type=page_type,
             slug=entity.id,
             title=entity.title,
-            tier=entity.tier if isinstance(entity.tier, Tier) else Tier(entity.tier),
+            tier=entity.tier if page_type is PageType.ENTITY else None,
             created=now,
             updated=now,
             tags=[],
@@ -740,6 +827,35 @@ def _write_low_confidence_review(
     review_writer.write("low_confidence_fact", body)
 
 
+def _write_pending_fact_review(
+    review_writer: ReviewWriter,
+    candidate: FactCandidate,
+    item: IngestItem,
+    timeline_summary: str,
+    suggested_page_type: PageType | None,
+    unresolved_entities: list[str],
+) -> None:
+    payload = {
+        "candidate": candidate.model_dump(mode="json"),
+        "event": item.event.model_dump(mode="json"),
+        "timeline_summary": timeline_summary,
+        "suggested_page_type": _enum_value(suggested_page_type),
+        "unresolved_entities": unresolved_entities,
+    }
+    body = "\n".join(
+        [
+            "# Pending fact",
+            "",
+            "This fact depends on unresolved entities. Resolve the entity review items first, then approve this pending fact.",
+            "",
+            "```json",
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            "```",
+        ]
+    )
+    review_writer.write("pending_fact", body)
+
+
 def _write_fact_conflict_review(
     review_writer: ReviewWriter,
     candidate: FactCandidate,
@@ -785,6 +901,38 @@ def _write_tier_review(
         ]
     )
     return review_writer.write("tier_proposal", body)
+
+
+def _write_ingest_error_review(
+    review_writer: ReviewWriter,
+    item: IngestItem,
+    exc: Exception,
+) -> None:
+    body = "\n".join(
+        [
+            "# Ingest error",
+            "",
+            f"- source: {item.source}",
+            f"- source_ref: {item.source_ref}",
+            f"- event_id: {item.event.id}",
+            f"- event_kind: {item.event.kind.value}",
+            f"- error_type: {type(exc).__name__}",
+            f"- error: {exc}",
+            "",
+            "## Event",
+            "",
+            "```json",
+            json.dumps(item.event.model_dump(mode="json"), ensure_ascii=False, indent=2),
+            "```",
+            "",
+            "## Traceback",
+            "",
+            "```text",
+            "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)).strip(),
+            "```",
+        ]
+    )
+    review_writer.write("ingest_error", body)
 
 
 def _record_item_success(

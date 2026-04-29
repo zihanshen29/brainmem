@@ -88,6 +88,97 @@ def test_laundry_ingest_persists_fact_page_timeline_archive_and_cursor(
     assert not (brain_root / "brain.db-shm").exists()
 
 
+def test_project_entity_uses_project_page_directory(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_laundry(brain_root, "Brain Project shipped a milestone.")
+    _install_signal_detector(
+        monkeypatch,
+        lambda: SignalExtraction(
+            entities=[
+                SignalEntity(
+                    name="Brain Project",
+                    type=EntityType.PROJECT,
+                    confidence=0.95,
+                    metadata={},
+                ),
+            ],
+            facts=[
+                FactCandidate(
+                    subject="brain-project",
+                    predicate="status",
+                    object="milestone-shipped",
+                    object_type=FactObjectType.LITERAL,
+                    valid_from="2026-04-28",
+                    source_event=SECOND_ULID,
+                    source_ref="laundry/brain.md",
+                    confidence=0.9,
+                ),
+            ],
+            timeline_summary="Brain Project shipped a milestone.",
+            suggested_page_type=PageType.PROJECT,
+        ),
+    )
+
+    report = _run_ingest(brain_root, source="laundry")
+
+    assert report.facts_added == 1
+    project_path = brain_root / "pages" / "projects" / "brain-project.md"
+    page = parse_page(project_path)
+    assert page.frontmatter.type is PageType.PROJECT
+    assert page.frontmatter.tier is None
+    assert not (brain_root / "pages" / "entities" / "brain-project.md").exists()
+
+
+def test_unresolved_entity_fact_becomes_pending_fact_review(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_laundry(brain_root, "小张 will work on recommendations.")
+    _install_signal_detector(
+        monkeypatch,
+        lambda: SignalExtraction(
+            entities=[
+                SignalEntity(
+                    name="小张",
+                    type=EntityType.PERSON,
+                    confidence=0.95,
+                    metadata={},
+                ),
+            ],
+            facts=[
+                FactCandidate(
+                    subject="小张",
+                    predicate="works_on",
+                    object="recommendations",
+                    object_type=FactObjectType.LITERAL,
+                    valid_from="2026-04-28",
+                    source_event=SECOND_ULID,
+                    source_ref="laundry/xiao-zhang.md",
+                    confidence=0.9,
+                ),
+            ],
+            timeline_summary="小张 will work on recommendations.",
+            suggested_page_type=PageType.ENTITY,
+        ),
+    )
+
+    report = _run_ingest(brain_root, source="laundry")
+
+    review_texts = [
+        path.read_text(encoding="utf-8")
+        for path in sorted((brain_root / "review").glob("*.md"))
+    ]
+    assert report.processed == 1
+    assert report.facts_added == 0
+    assert report.review_items_created == 2
+    assert report.laundry_archived == 1
+    assert any("kind: new_entity_review" in text for text in review_texts)
+    assert any("kind: pending_fact" in text for text in review_texts)
+    assert any('"subject": "小张"' in text for text in review_texts)
+
+
 def test_second_ingest_does_not_reprocess_archived_laundry(
     brain_root: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -139,6 +230,49 @@ def test_events_ingest_uses_cursor_to_skip_processed_events(
     assert _scalar(brain_root, "SELECT COUNT(*) FROM facts") == fact_count
     assert len(detector_calls) == 1
     assert cursor[0]["last_processed"] == VALID_ULID
+
+
+def test_events_ingest_failure_writes_review_and_advances_cursor(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    append_event(
+        brain_root / "events.jsonl",
+        Event(
+            id=VALID_ULID,
+            timestamp=datetime(2026, 4, 28, 12, 0, tzinfo=UTC),
+            kind=EventKind.RAW_IMPORTED,
+            source_ref="raw/alice.md",
+            raw_payload="Alice started maintaining Brain.",
+        ),
+    )
+
+    def raise_detection_error() -> SignalExtraction:
+        raise RuntimeError("detector unavailable")
+
+    _install_signal_detector(monkeypatch, raise_detection_error)
+
+    report = _run_ingest(brain_root, source="events")
+
+    cursor = _rows(
+        brain_root,
+        "SELECT last_processed FROM ingest_cursor WHERE source = ?",
+        ("events",),
+    )
+    review_files = list((brain_root / "review").glob("*.md"))
+
+    assert report.processed == 0
+    assert report.facts_added == 0
+    assert report.review_items_created == 1
+    assert len(report.errors) == 1
+    assert cursor[0]["last_processed"] == VALID_ULID
+    assert len(review_files) == 1
+
+    review_text = review_files[0].read_text(encoding="utf-8")
+    assert "kind: ingest_error" in review_text
+    assert "detector unavailable" in review_text
+    assert VALID_ULID in review_text
+    assert report.review_files == [review_files[0].relative_to(brain_root).as_posix()]
 
 
 def test_conflicting_fact_creates_fact_conflict_review(

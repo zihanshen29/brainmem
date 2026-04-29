@@ -80,7 +80,7 @@ def test_resolve_ascii_name_creates_entity(conn: sqlite3.Connection) -> None:
     assert resolved.id == "brain-dump"
     assert resolved.type is EntityType.PROJECT
     assert resolved.title == "Brain Dump"
-    assert resolved.page_path == "pages/entities/brain-dump.md"
+    assert resolved.page_path == "pages/projects/brain-dump.md"
     assert resolved.tier is Tier.TIER_3
     assert resolved.mention_count == 1
     assert get_entity(conn, "brain-dump") == resolved
@@ -94,6 +94,19 @@ def test_resolve_existing_slug_updates_mention(conn: sqlite3.Connection) -> None
     assert resolved is not None
     assert resolved.id == "brain-dump"
     assert resolved.mention_count == 2
+
+
+def test_resolve_ascii_slug_compact_match_reuses_existing_entity(
+    conn: sqlite3.Connection,
+) -> None:
+    upsert_entity(conn, sample_entity("xiao-zhang", "Xiao Zhang", EntityType.PERSON))
+
+    resolved = resolve_entity(conn, "xiaozhang", None)
+
+    assert resolved is not None
+    assert resolved.id == "xiao-zhang"
+    assert resolved.mention_count == 2
+    assert entity_count(conn) == 1
 
 
 def test_resolve_non_ascii_first_entity_returns_none_without_db_write(
@@ -148,6 +161,37 @@ def test_extract_backlinks_does_not_scan_alias_inside_wikilink_display() -> None
 
     assert [(link.to_entity, link.relation, link.line_number) for link in links] == [
         ("zhang-san", "mentions", 1),
+    ]
+
+
+def test_extract_backlinks_ascii_aliases_are_case_insensitive_whole_words() -> None:
+    content = "\n".join(
+        [
+            "AI helps, ai helps again, but Tail Said AIM and ai@example.com do not.",
+            "Go went, go returned, but going ego logo and user@go.dev do not.",
+            "\u8001\u5f20\u53c2\u4e0e\uff0c\u800c\u4e14\u5c0f\u8001\u5f20\u4e5f\u4fdd\u6301\u5b50\u4e32\u5339\u914d.",
+        ]
+    )
+
+    links = extract_backlinks(
+        content,
+        alias_map={
+            "AI": "artificial-intelligence",
+            "Go": "go",
+            "\u8001\u5f20": "zhang-san",
+        },
+        from_page="source",
+        entity_types={
+            "artificial-intelligence": EntityType.CONCEPT,
+            "go": EntityType.CONCEPT,
+            "zhang-san": EntityType.PERSON,
+        },
+    )
+
+    assert [(link.to_entity, link.line_number) for link in links] == [
+        ("artificial-intelligence", 1),
+        ("go", 2),
+        ("zhang-san", 3),
     ]
 
 

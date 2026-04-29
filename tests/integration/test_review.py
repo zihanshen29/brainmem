@@ -175,6 +175,63 @@ def test_apply_low_confidence_approve_inserts_candidate_fact(brain_root: Path) -
 
 
 @requires_review_pipeline
+def test_apply_new_entity_then_pending_fact_adds_fact_and_page(brain_root: Path) -> None:
+    _write_review(
+        brain_root,
+        "2026-04-28_001_new_entity_review",
+        "new_entity_review",
+        "\n".join(
+            [
+                "# New entity needs review",
+                "",
+                "- name: 小张",
+                "- type: person",
+                "- confidence: 0.95",
+                "",
+                "## Resolution",
+                "",
+                "- slug: zhang-san",
+                "- merge_into:",
+            ]
+        ),
+        checked="approve",
+    )
+    _write_review(
+        brain_root,
+        "2026-04-28_002_pending_fact",
+        "pending_fact",
+        _pending_fact_body(
+            FactCandidate(
+                subject="小张",
+                predicate="works_on",
+                object="recommendations",
+                object_type=FactObjectType.LITERAL,
+                valid_from="2026-04-28",
+                source_event=SECOND_ULID,
+                source_ref="laundry/xiao-zhang.md",
+                confidence=0.9,
+            )
+        ),
+        checked="approve",
+    )
+
+    report = apply_pending(brain_root)
+
+    facts = _rows(brain_root, "SELECT * FROM facts")
+    aliases = _rows(brain_root, "SELECT * FROM entity_aliases")
+    page = parse_page(brain_root / "pages" / "entities" / "zhang-san.md")
+    assert report.applied == 2
+    assert facts[0]["subject"] == "zhang-san"
+    assert facts[0]["predicate"] == "works_on"
+    assert aliases[0]["alias"] == "小张"
+    assert aliases[0]["entity_id"] == "zhang-san"
+    assert page.frontmatter.slug == "zhang-san"
+    assert page.frontmatter.type is PageType.ENTITY
+    assert _archived_review(brain_root, "2026-04-28_001_new_entity_review.md").exists()
+    assert _archived_review(brain_root, "2026-04-28_002_pending_fact.md").exists()
+
+
+@requires_review_pipeline
 def test_apply_tier_proposal_updates_entity_and_rewrites_page(
     brain_root: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -258,7 +315,7 @@ def test_unsupported_new_entity_approve_reports_error(brain_root: Path) -> None:
 
     assert report.applied == 0
     assert len(report.errors) == 1
-    assert "Approve is not implemented" in report.errors[0]
+    assert "requires slug or merge_into" in report.errors[0]
 
 
 def test_cli_review_lists_pending_items_and_filters_kind(
@@ -475,6 +532,36 @@ def _fact_conflict_body(candidate: FactCandidate, facts: list[Fact]) -> str:
     )
 
 
+def _pending_fact_body(candidate: FactCandidate) -> str:
+    payload = {
+        "candidate": candidate.model_dump(mode="json"),
+        "event": {
+            "id": candidate.source_event,
+            "timestamp": "2026-04-28T12:00:00Z",
+            "kind": "laundry_ingested",
+            "source_ref": candidate.source_ref,
+            "raw_payload": "小张 will work on recommendations.",
+            "raw_payload_path": None,
+            "extracted_facts": [],
+            "affected_pages": [],
+            "confidence": 1.0,
+            "metadata": {},
+        },
+        "timeline_summary": "小张 will work on recommendations.",
+        "suggested_page_type": "entity",
+        "unresolved_entities": ["小张"],
+    }
+    return "\n".join(
+        [
+            "# Pending fact",
+            "",
+            "```json",
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            "```",
+        ]
+    )
+
+
 def _tier_body() -> str:
     return "\n".join(
         [
@@ -563,8 +650,8 @@ def _insert_entity_and_page(brain_root: Path) -> None:
     )
 
 
-def _archived_review(root: Path) -> Path:
-    return root / "review" / "archive" / "2026-04-28_001_fact_conflict.md"
+def _archived_review(root: Path, name: str = "2026-04-28_001_fact_conflict.md") -> Path:
+    return root / "review" / "archive" / name
 
 
 def _rows(brain_root: Path, sql: str, params: tuple[object, ...] = ()) -> list[sqlite3.Row]:

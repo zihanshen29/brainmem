@@ -48,10 +48,16 @@ def _judge_low_confidence_conflicts(
     candidate: FactCandidate,
     config: Config,
 ) -> Decision:
+    saw_conflict = False
     for old_fact in old_facts:
         judgment = llm_client.judge_conflict(old_fact, candidate)
-        if not judgment.is_conflict or not judgment.new_supersedes_old:
+        if not judgment.is_conflict:
+            continue
+        saw_conflict = True
+        if not judgment.new_supersedes_old:
             return Decision.CONFLICT
         if judgment.confidence < config.ingest.confidence_auto_accept:
             return Decision.CONFLICT
-    return Decision.SUPERSEDE
+    if saw_conflict:
+        return Decision.SUPERSEDE
+    return Decision.ADD

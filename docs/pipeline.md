@@ -139,7 +139,7 @@ def check_tier(entity):
 有现有 fact 且 object 相同 → NOOP，只更新 last_seen。
 
 有现有 fact 且 object 不同 → **冲突**：
-- 如果新候选 confidence ≥ `confidence_auto_accept` 且现有 fact 是低 confidence → LLM 判断（"这是不是真覆盖"）。LLM 同意 → 自动 supersede（旧的 valid_to = 新的 valid_from，superseded_by = 新 id）。LLM 不同意或 borderline → 进 review。
+- 如果新候选 confidence ≥ `confidence_auto_accept` 且现有 fact 是低 confidence → LLM 判断（"这是不是真覆盖"）。LLM 判断不冲突 → ADD；LLM 判断冲突且同意覆盖 → 自动 supersede（旧的 valid_to = 新的 valid_from，superseded_by = 新 id）；LLM 不同意覆盖或 borderline → 进 review。
 - 否则 → 进 review，不自动决定。
 
 #### 2e. write-decisions
@@ -155,6 +155,8 @@ elif confidence < auto_reject:
 else:
     write to review/ (代码)
 ```
+
+如果 fact 的 subject 或 entity object 依赖尚未解析的新 entity，写 `pending_fact` review，而不是丢弃该 fact。用户处理对应 `new_entity_review` 后，可以 approve `pending_fact`，系统会复用同一套 classify/write/page 更新逻辑。
 
 页面追加 timeline 项的格式：
 

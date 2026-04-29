@@ -4,6 +4,8 @@ from datetime import UTC, datetime
 from brain.models import Backlink, EntityType, PageType
 
 _WIKILINK_PATTERN = re.compile(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")
+_EMAIL_PATTERN = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])")
+_ASCII_ALNUM_PATTERN = re.compile(r"^[A-Za-z0-9]+$")
 
 
 def _now_utc() -> datetime:
@@ -47,14 +49,28 @@ def _inside_span(index: int, spans: list[tuple[int, int]]) -> bool:
     return any(start <= index < end for start, end in spans)
 
 
+def _is_ascii_alnum_alias(alias: str) -> bool:
+    return bool(_ASCII_ALNUM_PATTERN.fullmatch(alias))
+
+
 def _alias_occurrences(
     line: str,
     alias_map: dict[str, str],
-    wikilink_spans: list[tuple[int, int]],
+    ignored_spans: list[tuple[int, int]],
 ) -> list[tuple[int, str]]:
     occurrences: list[tuple[int, str]] = []
     for alias, entity_id in alias_map.items():
         if not alias:
+            continue
+
+        if _is_ascii_alnum_alias(alias):
+            pattern = re.compile(
+                rf"(?<![A-Za-z0-9_]){re.escape(alias)}(?![A-Za-z0-9_])",
+                re.IGNORECASE,
+            )
+            for match in pattern.finditer(line):
+                if not _inside_span(match.start(), ignored_spans):
+                    occurrences.append((match.start(), entity_id))
             continue
 
         start = 0
@@ -62,7 +78,7 @@ def _alias_occurrences(
             index = line.find(alias, start)
             if index == -1:
                 break
-            if not _inside_span(index, wikilink_spans):
+            if not _inside_span(index, ignored_spans):
                 occurrences.append((index, entity_id))
             start = index + len(alias)
     return occurrences
@@ -84,9 +100,10 @@ def extract_backlinks(
     for line_number, line in enumerate(content.splitlines(), start=1):
         wikilink_matches = list(_WIKILINK_PATTERN.finditer(line))
         wikilink_spans = [match.span() for match in wikilink_matches]
+        ignored_spans = wikilink_spans + [match.span() for match in _EMAIL_PATTERN.finditer(line)]
         occurrences: list[tuple[int, str, str]] = []
 
-        for index, entity_id in _alias_occurrences(line, alias_map, wikilink_spans):
+        for index, entity_id in _alias_occurrences(line, alias_map, ignored_spans):
             entity_type = _coerce_entity_type(target_types.get(entity_id))
             occurrences.append((index, entity_id, _alias_relation(source_type, entity_type)))
 

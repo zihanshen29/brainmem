@@ -155,7 +155,7 @@ def test_classify_fact_llm_supersede_decision(conn: sqlite3.Connection, monkeypa
     assert len(calls) == 1
 
 
-def test_classify_fact_requires_llm_conflict_for_supersede(
+def test_classify_fact_adds_when_llm_says_no_conflict(
     conn: sqlite3.Connection,
     monkeypatch,
 ) -> None:
@@ -174,7 +174,7 @@ def test_classify_fact_requires_llm_conflict_for_supersede(
 
     decision = classify_fact(conn, sample_candidate("Singapore", confidence=0.95), make_config())
 
-    assert decision is Decision.CONFLICT
+    assert decision is Decision.ADD
 
 
 def test_classify_fact_does_not_write_db(conn: sqlite3.Connection, monkeypatch) -> None:

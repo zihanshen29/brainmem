@@ -36,6 +36,16 @@ def _slug_from_name(name: str) -> str | None:
     return slug or None
 
 
+def _page_path_for_entity(entity_id: str, entity_type: EntityType | None) -> str:
+    if entity_type is EntityType.PROJECT:
+        return f"pages/projects/{entity_id}.md"
+    if entity_type is EntityType.CONCEPT:
+        return f"pages/concepts/{entity_id}.md"
+    if entity_type is EntityType.EVENT:
+        return f"pages/events/{entity_id}.md"
+    return f"pages/entities/{entity_id}.md"
+
+
 def resolve_entity(
     conn: sqlite3.Connection,
     name: str,
@@ -61,12 +71,16 @@ def resolve_entity(
     if existing is not None:
         return _touch_entity(conn, existing.id)
 
+    compact_match = _lookup_by_compact_slug(conn, slug)
+    if compact_match is not None:
+        return _touch_entity(conn, compact_match)
+
     now = _now_utc()
     entity = Entity(
         id=slug,
         type=hint_type or EntityType.CONCEPT,
         title=name,
-        page_path=f"pages/entities/{slug}.md",
+        page_path=_page_path_for_entity(slug, hint_type),
         tier=Tier.TIER_3,
         mention_count=1,
         first_seen=now,
@@ -74,3 +88,19 @@ def resolve_entity(
     )
     upsert_entity(conn, entity)
     return entity
+
+
+def _lookup_by_compact_slug(conn: sqlite3.Connection, slug: str) -> str | None:
+    compact_slug = slug.replace("-", "")
+    rows = conn.execute(
+        """
+        SELECT id
+        FROM entities
+        WHERE replace(id, '-', '') = ?
+        ORDER BY id
+        """,
+        (compact_slug,),
+    ).fetchall()
+    if len(rows) != 1:
+        return None
+    return str(rows[0]["id"])

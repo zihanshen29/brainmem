@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import re
 import shutil
@@ -16,14 +17,24 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from brain.config import load_config
 from brain.db.connection import connect
-from brain.db.entities import get_entity
+from brain.db.entities import add_alias, get_entity, lookup_by_alias, upsert_entity
 from brain.db.facts import add_fact, find_active_facts, supersede
 from brain.db.tier import record_tier_decision
 from brain.exceptions import BrainError
 from brain.git_ops import commit
 from brain.ledger import append_event
 from brain.llm import client as llm_client
-from brain.models import Event, EventKind, Fact, FactCandidate, Tier
+from brain.models import (
+    Entity,
+    EntityAliasSource,
+    EntityType,
+    Event,
+    EventKind,
+    Fact,
+    FactCandidate,
+    PageType,
+    Tier,
+)
 from brain.pages import parse_page, write_page
 from brain.pages.timeline import parse_entry
 from brain.paths import BrainPaths
@@ -33,7 +44,9 @@ class ReviewKind(StrEnum):
     """Supported review item kinds."""
 
     FACT_CONFLICT = "fact_conflict"
+    INGEST_ERROR = "ingest_error"
     LOW_CONFIDENCE_FACT = "low_confidence_fact"
+    PENDING_FACT = "pending_fact"
     TIER_PROPOSAL = "tier_proposal"
     LINT_FINDING = "lint_finding"
     NEW_ENTITY_REVIEW = "new_entity_review"
@@ -254,8 +267,12 @@ def apply_decision(conn: sqlite3.Connection, decision: ReviewDecision) -> Review
         return _approve_fact_conflict(conn, paths, decision, report)
     if decision.kind is ReviewKind.LOW_CONFIDENCE_FACT:
         return _approve_low_confidence_fact(conn, paths, decision, report)
+    if decision.kind is ReviewKind.PENDING_FACT:
+        return _approve_pending_fact(conn, paths, decision, report)
     if decision.kind is ReviewKind.TIER_PROPOSAL:
         return _approve_tier_proposal(conn, paths, decision, report)
+    if decision.kind is ReviewKind.NEW_ENTITY_REVIEW:
+        return _approve_new_entity_review(conn, paths, decision, report)
 
     report.errors.append(f"Approve is not implemented for review kind: {decision.kind.value}")
     report.skipped = True
@@ -345,6 +362,137 @@ def _approve_low_confidence_fact(
         fact_id = add_fact(conn, _fact_from_candidate(decision.candidate, _now_utc()))
         report.facts_added.append(fact_id)
         report.entity_id = decision.candidate.subject
+        _record_review_event(paths, decision, "approved", report)
+
+    report.archived_path = _mark_and_archive(decision.path, ReviewStatus.APPROVED, decision.action)
+    report.applied = True
+    return report
+
+
+def _approve_pending_fact(
+    conn: sqlite3.Connection,
+    paths: BrainPaths,
+    decision: ReviewDecision,
+    report: ReviewApplyReport,
+) -> ReviewApplyReport:
+    if decision.candidate is None:
+        report.errors.append(f"Review file has no pending fact candidate: {decision.path}")
+        report.skipped = True
+        return report
+
+    normalized = _resolve_pending_candidate(conn, decision.candidate)
+    if normalized is None:
+        report.errors.append("Pending fact still has unresolved entity references")
+        report.skipped = True
+        return report
+
+    event = _pending_event(decision, normalized)
+    timeline_summary = _string_data(decision, "timeline_summary") or "Approved pending fact."
+    suggested_page_type = _page_type_data(decision)
+
+    ingest_pipeline = importlib.import_module("brain.pipeline.ingest")
+
+    ingest_report = ingest_pipeline.IngestReport()
+    review_writer = ingest_pipeline.ReviewWriter.create(paths, ingest_report)
+    item = ingest_pipeline.IngestItem(
+        source="events",
+        source_ref=normalized.source_ref or event.source_ref,
+        text="",
+        event=event,
+    )
+    result = ingest_pipeline.ItemResult()
+
+    with conn:
+        ingest_pipeline._handle_candidate(
+            conn=conn,
+            paths=paths,
+            config=load_config(paths.config_path),
+            item=item,
+            candidate=normalized,
+            timeline_summary=timeline_summary,
+            review_writer=review_writer,
+            report=ingest_report,
+            result=result,
+            suggested_page_type=suggested_page_type,
+        )
+        ingest_pipeline._rebuild_touched_backlinks(conn, paths, ingest_report.pages_touched)
+
+        for fact_id in result.fact_ids:
+            report.facts_added.append(int(fact_id))
+        report.pages_touched.extend(ingest_report.pages_touched)
+        report.entity_id = normalized.subject
+        if ingest_report.review_files and not report.facts_added:
+            report.errors.extend(
+                f"Pending fact produced review item: {path}" for path in ingest_report.review_files
+            )
+        _record_review_event(paths, decision, "approved", report)
+
+    from brain.pages import append_log, regenerate_index
+
+    regenerate_index(paths.root)
+    append_log(
+        paths.root,
+        f"- {_now_utc().strftime('%Y-%m-%d %H:%M')} review: applied pending fact {decision.review_id}",
+    )
+
+    report.archived_path = _mark_and_archive(decision.path, ReviewStatus.APPROVED, decision.action)
+    report.applied = True
+    return report
+
+
+def _approve_new_entity_review(
+    conn: sqlite3.Connection,
+    paths: BrainPaths,
+    decision: ReviewDecision,
+    report: ReviewApplyReport,
+) -> ReviewApplyReport:
+    name = _string_data(decision, "name")
+    if name is None:
+        report.errors.append("New entity review is missing name")
+        report.skipped = True
+        return report
+
+    merge_into = _string_data(decision, "merge_into") or _string_data(decision, "entity_id")
+    slug = _string_data(decision, "slug")
+    if merge_into is None and slug is None:
+        report.errors.append("Approve new_entity_review requires slug or merge_into")
+        report.skipped = True
+        return report
+
+    now = _now_utc()
+    with conn:
+        if merge_into is not None:
+            entity = get_entity(conn, merge_into)
+            if entity is None:
+                report.errors.append(f"Target entity does not exist: {merge_into}")
+                report.skipped = True
+                return report
+            _add_alias_if_missing(conn, name, entity.id)
+            report.entity_id = entity.id
+        else:
+            assert slug is not None
+            if not _valid_slug(slug):
+                report.errors.append(f"Invalid entity slug: {slug}")
+                report.skipped = True
+                return report
+            entity = get_entity(conn, slug)
+            if entity is None:
+                entity_type = _entity_type_data(decision) or EntityType.CONCEPT
+                entity = Entity(
+                    id=slug,
+                    type=entity_type,
+                    title=name,
+                    page_path=_default_page_path(slug, entity_type),
+                    tier=Tier.TIER_3,
+                    mention_count=1,
+                    first_seen=now,
+                    last_seen=now,
+                    metadata={},
+                )
+                upsert_entity(conn, entity)
+            _add_alias_if_missing(conn, name, entity.id)
+            report.entity_id = entity.id
+
         _record_review_event(paths, decision, "approved", report)
 
     report.archived_path = _mark_and_archive(decision.path, ReviewStatus.APPROVED, decision.action)
@@ -527,13 +675,20 @@ def _extract_review_data(kind: ReviewKind, content: str) -> tuple[dict[str, Any]
     key_values = _markdown_key_values(content)
     data: dict[str, Any] = {"json": json_values, **key_values}
 
-    if kind in {ReviewKind.FACT_CONFLICT, ReviewKind.LOW_CONFIDENCE_FACT}:
+    if kind in {
+        ReviewKind.FACT_CONFLICT,
+        ReviewKind.LOW_CONFIDENCE_FACT,
+        ReviewKind.PENDING_FACT,
+    }:
         candidate = _candidate_json(json_values)
         if candidate is not None:
             data["candidate"] = candidate
         active_facts = _active_facts_json(json_values)
         if active_facts is not None:
             data["active_facts"] = active_facts
+        pending_payload = _pending_payload_json(json_values)
+        if pending_payload is not None:
+            data.update(pending_payload)
     elif kind is ReviewKind.TIER_PROPOSAL:
         data.update(_tier_json(json_values))
 
@@ -602,6 +757,24 @@ def _tier_json(values: list[Any]) -> dict[str, Any]:
         if isinstance(proposal, dict) and tier_keys.intersection(proposal):
             return dict(proposal)
     return {}
+
+
+def _pending_payload_json(values: list[Any]) -> dict[str, Any] | None:
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        payload: dict[str, Any] = {}
+        if isinstance(value.get("event"), dict):
+            payload["event"] = value["event"]
+        if isinstance(value.get("timeline_summary"), str):
+            payload["timeline_summary"] = value["timeline_summary"]
+        if isinstance(value.get("suggested_page_type"), str | type(None)):
+            payload["suggested_page_type"] = value.get("suggested_page_type")
+        if isinstance(value.get("unresolved_entities"), list):
+            payload["unresolved_entities"] = value["unresolved_entities"]
+        if payload:
+            return payload
+    return None
 
 
 def _looks_like_candidate(value: dict[str, Any]) -> bool:
@@ -702,6 +875,104 @@ def _review_file_refs(paths: BrainPaths, path: Path) -> tuple[str, ...]:
         if ref not in deduped:
             deduped.append(ref)
     return tuple(deduped)
+
+
+def _resolve_pending_candidate(
+    conn: sqlite3.Connection,
+    candidate: FactCandidate,
+) -> FactCandidate | None:
+    subject = _resolve_existing_entity_id(conn, candidate.subject)
+    if subject is None:
+        return None
+
+    object_value = candidate.object
+    if candidate.object_type.value == "entity":
+        resolved_object = _resolve_existing_entity_id(conn, candidate.object)
+        if resolved_object is None:
+            return None
+        object_value = resolved_object
+
+    return candidate.model_copy(update={"subject": subject, "object": object_value})
+
+
+def _resolve_existing_entity_id(conn: sqlite3.Connection, value: str) -> str | None:
+    if get_entity(conn, value) is not None:
+        return value
+
+    alias_id = lookup_by_alias(conn, value)
+    if alias_id is not None:
+        return alias_id
+
+    row = conn.execute(
+        "SELECT id FROM entities WHERE title = ? ORDER BY id LIMIT 1",
+        (value,),
+    ).fetchone()
+    if row is None:
+        return None
+    return str(row["id"])
+
+
+def _pending_event(decision: ReviewDecision, candidate: FactCandidate) -> Event:
+    value = decision.data.get("event")
+    if isinstance(value, dict):
+        try:
+            return Event.model_validate(value)
+        except ValidationError:
+            pass
+    return Event(
+        id=candidate.source_event,
+        timestamp=_now_utc(),
+        kind=EventKind.REVIEW_DECIDED,
+        source_ref=candidate.source_ref or _review_source_ref(
+            BrainPaths(_infer_brain_root(decision.path)),
+            decision.path,
+        ),
+    )
+
+
+def _page_type_data(decision: ReviewDecision) -> PageType | None:
+    value = decision.data.get("suggested_page_type")
+    if value is None:
+        return None
+    try:
+        return PageType(str(value))
+    except ValueError:
+        return None
+
+
+def _entity_type_data(decision: ReviewDecision) -> EntityType | None:
+    value = _string_data(decision, "type")
+    if value in {None, "None", "null"}:
+        return None
+    try:
+        return EntityType(str(value))
+    except ValueError:
+        return None
+
+
+def _valid_slug(value: str) -> bool:
+    return re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", value) is not None
+
+
+def _default_page_path(entity_id: str, entity_type: EntityType) -> str:
+    if entity_type is EntityType.PROJECT:
+        return f"pages/projects/{entity_id}.md"
+    if entity_type is EntityType.CONCEPT:
+        return f"pages/concepts/{entity_id}.md"
+    if entity_type is EntityType.EVENT:
+        return f"pages/events/{entity_id}.md"
+    return f"pages/entities/{entity_id}.md"
+
+
+def _add_alias_if_missing(conn: sqlite3.Connection, alias: str, entity_id: str) -> None:
+    if alias == entity_id:
+        return
+    existing = lookup_by_alias(conn, alias)
+    if existing == entity_id:
+        return
+    if existing is not None:
+        raise BrainError(f"Alias already belongs to another entity: {alias}")
+    add_alias(conn, alias, entity_id, EntityAliasSource.MANUAL)
 
 
 def _review_source_ref(paths: BrainPaths, path: Path) -> str:

@@ -348,7 +348,10 @@ status: pending
 请勾选一个并保存，然后运行 `mem review` 处理。
 ```
 
-`kind` 可选值：`fact_conflict` / `low_confidence_fact` / `tier_proposal` / `lint_finding` / `new_entity_review`。
+`kind` 可选值：`fact_conflict` / `low_confidence_fact` / `pending_fact` / `tier_proposal` / `lint_finding` / `new_entity_review` / `ingest_error`。
+
+- `pending_fact` 保存因 unresolved entity 暂时无法规范化的候选 fact。用户先处理对应 `new_entity_review`，再 approve `pending_fact`，系统会重新走 fact 分类、写入和页面更新逻辑。
+- `ingest_error` 保存事件 ingest 失败时的 event payload、错误类型、错误信息和 traceback。cursor 可以继续推进，但失败不会只停留在一次性控制台输出里。
 
 ## 8. 命名规范
 
