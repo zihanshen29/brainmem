@@ -2,9 +2,9 @@
 
 ## 这是什么
 
-`brain` 是一个本地、单用户的个人记忆系统，用来把碎片化的笔记、对话、文档、思考逐步编译成可查询、可演化的知识库。设计灵感来自 Andrej Karpathy 的 LLM Wiki（plain markdown + LLM 作 compiler）和 Garry Tan 的 GBrain（compiled truth + timeline + entity-centric pages），但**没有任何外部依赖**：不连云、不依赖某个 agent runtime、不用付费服务。
+`brain` 是一个本地、单用户的个人记忆系统，用来把碎片化的笔记、对话、文档、思考逐步编译成可查询、可演化的知识库。设计灵感来自 Andrej Karpathy 的 LLM Wiki（plain markdown + LLM 作 compiler）和 Garry Tan 的 GBrain（compiled truth + timeline + entity-centric pages）。数据和索引默认留在本机；需要语义抽取、冲突判断、解释或改写时，显式调用配置好的 LLM provider。
 
-核心心智模型：**LLM 是 compiler，原始素材是 source code，知识库是 compiled artifact**。系统不是一个聊天机器人，是一个**离线编译管线 + 本地查询接口**。
+核心心智模型：**LLM 是 compiler，原始素材是 source code，知识库是 compiled artifact**。系统不是一个聊天机器人，是一个**手动触发的编译管线 + 本地查询接口**。普通 `mem ask` 不调用外部模型；`mem ingest`、`mem ask --explain`、`mem promote-chat` 等命令可能调用配置的 LLM。
 
 ## 这不是什么
 
@@ -51,7 +51,7 @@ Phase 2（**本 spec 不涉及，将来另写**）会加：向量索引（Chroma
 
 ## 项目命名
 
-- 仓库名：`brain`
+- 仓库名：`brainmem`
 - Python 包名：`brain`
 - CLI 入口：`mem`
 - 用户数据目录：`~/brain/`（Windows: `%USERPROFILE%\brain\`）

@@ -349,7 +349,7 @@ def ask(query):
 
 ### --explain 模式
 
-把 top-N 页面的全文和原始 query 拼成一个 prompt 给 Claude，强约束："只用提供的 brain 内容回答，没有信息直说不知道，不要编造"。
+把 top-N 页面的全文和原始 query 拼成一个 prompt 给配置的 LLM，强约束："只用提供的 brain 内容回答，没有信息直说不知道，不要编造"。
 
 ### 测试
 
@@ -363,7 +363,7 @@ def ask(query):
 ### 步骤
 
 1. **代码**：读 event，验证 `kind == 'ai_chat'`
-2. **LLM**：让 Claude 把对话内容转写成 conversations 页（compiled truth = 这次对话的核心结论；timeline = 关键讨论节点）
+2. **LLM**：让配置的 LLM 把对话内容转写成 conversations 页（compiled truth = 这次对话的核心结论；timeline = 关键讨论节点）
 3. **代码**：写到 `pages/conversations/<YYYY-MM-DD>_<slug>.md`
 4. **代码**：在 events.jsonl 追加 `kind=page_edited` 事件
 5. **代码**：触发一次 `mem ingest` 增量处理这个新页面（提取里面提到的 entity）
@@ -410,7 +410,7 @@ mem rebuild --index              # 重建 pages/index.md
 3. **代码**：backlinks 表中 to_entity 改成 slug-a
 4. **代码**：把 `pages/.../slug-b.md` 的 timeline 追加到 slug-a 的 timeline，按时间排序
 5. **代码**：删除 slug-b 页面（git commit）
-6. **LLM**：让 Claude 重写 slug-a 的 compiled truth，因为有了新信息
+6. **LLM**：让配置的 LLM 重写 slug-a 的 compiled truth，因为有了新信息
 
 ### Git 集成
 

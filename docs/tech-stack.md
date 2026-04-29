@@ -21,7 +21,8 @@ requires-python = ">=3.11,<3.12"
 dependencies = [
     "typer>=0.12.0",                 # CLI 框架
     "pydantic>=2.6.0",               # schema 校验
-    "anthropic>=0.40.0",             # Claude SDK
+    "anthropic>=0.40.0",             # Anthropic provider
+    "openai>=1.66.0",                # OpenAI SDK and OpenAI-compatible providers such as DeepSeek
     "python-frontmatter>=1.1.0",     # 解析 markdown frontmatter
     "python-ulid>=2.2.0",            # ULID
     "rich>=13.7.0",                  # 终端格式化
@@ -40,6 +41,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"brain.db" = ["migrations/*.sql"]
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
@@ -52,19 +56,20 @@ dev = [
 **不要加** 的依赖（这些是 Phase 2 才需要的）：
 - chromadb / qdrant-client / faiss-cpu
 - networkx / neo4j（Phase 1 不上图谱）
-- sentence-transformers / openai
+- sentence-transformers
 - celery / redis / rq
 - fastapi / flask / streamlit
 
 ## 3. 项目结构
 
 ```
-brain/                                # 仓库根
+brainmem/                             # 仓库根
 ├── pyproject.toml
 ├── README.md
+├── README.zh-CN.md
+├── docs/
 ├── .gitignore
 ├── .ruff.toml
-├── .python-version                  # 3.11
 │
 ├── src/
 │   └── brain/
@@ -116,7 +121,7 @@ brain/                                # 仓库根
 │       │   ├── promote_chat.py
 │       │   └── rebuild.py
 │       │
-│       ├── llm/                     # Claude 调用封装
+│       ├── llm/                     # LLM provider 调用封装
 │       │   ├── __init__.py
 │       │   ├── client.py
 │       │   └── prompts.py
@@ -202,21 +207,36 @@ content = page_path.read_text()  # Windows 默认可能是 cp1252
 *.jsonl text eol=lf
 ```
 
-## 5. Anthropic API key
+## 5. LLM provider and API keys
 
-**不要硬编码**。从环境变量读，config.toml 里只放变量名：
+默认 provider 是 DeepSeek V4，兼容 OpenAI 和 Anthropic 配置。Provider 选择优先级为：`deepseek` > `openai` > `anthropic`。`mem init` 写入 DeepSeek 默认配置。
+
+**不要硬编码 API key**。从环境变量读，`config.toml` 里只放变量名：
 
 ```toml
+[deepseek]
+api_key_env = "DEEPSEEK_API_KEY"
+base_url = "https://api.deepseek.com"
+model = "deepseek-v4-pro"
+fast_model = "deepseek-v4-flash"
+
+[openai]
+api_key_env = "OPENAI_API_KEY"
+model = "gpt-5.5"
+fast_model = "gpt-5.4-mini"
+
 [anthropic]
 api_key_env = "ANTHROPIC_API_KEY"
+model = "claude-3-5-haiku-latest"
+fast_model = "claude-3-5-haiku-latest"
 ```
 
 ```python
 import os
-key = os.environ.get(config.anthropic.api_key_env)
+key = os.environ.get(config.deepseek.api_key_env)
 if not key:
     raise click.UsageError(
-        f"Set ${config.anthropic.api_key_env} or run `mem config set-key`."
+        f"Set ${config.deepseek.api_key_env} before running LLM-backed commands."
     )
 ```
 
@@ -224,10 +244,12 @@ if not key:
 
 ```
 Set your API key in PowerShell:
-  $env:ANTHROPIC_API_KEY = "sk-ant-..."
+  $env:DEEPSEEK_API_KEY = "<your-deepseek-api-key>"
 Or persist:
-  setx ANTHROPIC_API_KEY "sk-ant-..."
+  setx DEEPSEEK_API_KEY "<your-deepseek-api-key>"
 ```
+
+Plain `mem ask` is local retrieval and does not require an API key. `mem ingest`, `mem ask --explain`, `mem promote-chat`, tier compiled-truth rewrites, and forced page rewrites may call the configured provider.
 
 ## 6. 日志
 
@@ -290,7 +312,7 @@ def tmp_brain(tmp_path: Path):
     return root
 ```
 
-**Mock Anthropic 调用**：
+**Mock LLM 调用**：
 
 ```python
 @pytest.fixture

@@ -103,7 +103,7 @@ Phase 1 不上向量。检索靠：
 
 `mem ask` 命令把这三种结果融合（简单加权，不上 RRF），返回 top-N 页面摘要。
 
-`mem ask --explain` 模式会把 top-N 页面作为 context 喂给 Claude，让它生成自然语言答案，并强制要求"先查 brain，没有就直说不知道"（brain-ops 原则）。
+`mem ask --explain` 模式会把 top-N 页面作为 context 喂给配置的 LLM，让它生成自然语言答案，并强制要求"只基于提供的 brain 内容回答，没有就直说不知道"（brain-ops 原则）。
 
 Phase 2 会加 Chroma 向量、RRF、graph walk，但本 spec 不涉及。
 
