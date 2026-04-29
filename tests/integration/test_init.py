@@ -50,7 +50,13 @@ def test_init_creates_files_dirs_db_and_initial_commit(tmp_path: Path) -> None:
 
     assert (root / "events.jsonl").read_text(encoding="utf-8") == ""
     assert "*.jsonl text eol=lf" in (root / ".gitattributes").read_text(encoding="utf-8")
-    assert load_config(root / "config.toml").paths.brain_root == root.resolve()
+    config = load_config(root / "config.toml")
+    assert config.paths.brain_root == root.resolve()
+    assert config.openai is not None
+    assert config.openai.api_key_env == "OPENAI_API_KEY"
+    assert config.openai.model == "gpt-5.5"
+    assert config.openai.fast_model == "gpt-5.4-mini"
+    assert config.anthropic is None
     assert _db_user_version(root / "brain.db") == 1
     assert _git_log_messages(root) == ["Initialize brain repository"]
 

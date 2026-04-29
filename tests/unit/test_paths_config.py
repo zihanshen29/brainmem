@@ -9,6 +9,33 @@ from brain.paths import BrainPaths
 
 def valid_config_text(root: Path) -> str:
     return f"""
+[openai]
+api_key_env = "OPENAI_API_KEY"
+model = "gpt-5.5"
+fast_model = "gpt-5.4-mini"
+
+[paths]
+brain_root = "{root.as_posix()}"
+
+[ingest]
+confidence_auto_accept = 0.85
+confidence_auto_reject = 0.50
+
+[tier]
+tier3_threshold = 1
+tier2_threshold = 3
+tier1_threshold = 8
+
+[lint]
+stale_days = 90
+
+[git]
+auto_commit = true
+""".strip()
+
+
+def valid_anthropic_config_text(root: Path) -> str:
+    return f"""
 [anthropic]
 api_key_env = "ANTHROPIC_API_KEY"
 model = "claude-opus-4-7"
@@ -71,9 +98,11 @@ def test_load_config_valid_file(tmp_path: Path) -> None:
 
     config = load_config(config_path)
 
-    assert config.anthropic.api_key_env == "ANTHROPIC_API_KEY"
-    assert config.anthropic.model == "claude-opus-4-7"
-    assert config.anthropic.fast_model == "claude-haiku-4-5"
+    assert config.openai is not None
+    assert config.openai.api_key_env == "OPENAI_API_KEY"
+    assert config.openai.model == "gpt-5.5"
+    assert config.openai.fast_model == "gpt-5.4-mini"
+    assert config.anthropic is None
     assert config.paths.brain_root == root
     assert config.ingest.confidence_auto_accept == 0.85
     assert config.ingest.confidence_auto_reject == 0.50
@@ -82,6 +111,50 @@ def test_load_config_valid_file(tmp_path: Path) -> None:
     assert config.tier.tier1_threshold == 8
     assert config.lint.stale_days == 90
     assert config.git.auto_commit is True
+
+
+def test_load_config_legacy_anthropic_file_remains_valid(tmp_path: Path) -> None:
+    root = tmp_path / "brain"
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(valid_anthropic_config_text(root), encoding="utf-8", newline="\n")
+
+    config = load_config(config_path)
+
+    assert config.openai is None
+    assert config.anthropic is not None
+    assert config.anthropic.api_key_env == "ANTHROPIC_API_KEY"
+    assert config.anthropic.model == "claude-opus-4-7"
+    assert config.anthropic.fast_model == "claude-haiku-4-5"
+
+
+def test_load_config_missing_llm_provider_raises_config_error(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[paths]
+brain_root = "~/brain"
+
+[ingest]
+confidence_auto_accept = 0.85
+confidence_auto_reject = 0.50
+
+[tier]
+tier3_threshold = 1
+tier2_threshold = 3
+tier1_threshold = 8
+
+[lint]
+stale_days = 90
+
+[git]
+auto_commit = true
+""".strip(),
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    with pytest.raises(ConfigError):
+        load_config(config_path)
 
 
 def test_load_config_missing_required_field_raises_config_error(tmp_path: Path) -> None:

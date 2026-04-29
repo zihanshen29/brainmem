@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import sys
+import types
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from brain.exceptions import LLMError
+from brain.exceptions import ConfigError, LLMError
 from brain.llm import client as llm_client
 from brain.llm.client import ConflictJudgment, PromotedChatDraft
 from brain.models.entity import EntityType
@@ -66,6 +68,38 @@ def signal_payload() -> dict:
 
 def valid_config_text(root: Path) -> str:
     return f"""
+[anthropic]
+api_key_env = "CUSTOM_ANTHROPIC_API_KEY"
+model = "claude-config-model"
+fast_model = "claude-fast-model"
+
+[paths]
+brain_root = "{root.as_posix()}"
+
+[ingest]
+confidence_auto_accept = 0.85
+confidence_auto_reject = 0.50
+
+[tier]
+tier3_threshold = 1
+tier2_threshold = 3
+tier1_threshold = 8
+
+[lint]
+stale_days = 90
+
+[git]
+auto_commit = true
+""".strip()
+
+
+def openai_config_text(root: Path) -> str:
+    return f"""
+[openai]
+api_key_env = "CUSTOM_OPENAI_API_KEY"
+model = "gpt-config-model"
+fast_model = "gpt-config-fast-model"
+
 [anthropic]
 api_key_env = "CUSTOM_ANTHROPIC_API_KEY"
 model = "claude-config-model"
@@ -289,3 +323,114 @@ def test_anthropic_settings_read_model_and_key_from_config(
 
     assert settings.model == "claude-config-model"
     assert settings.api_key == "secret-key"
+
+
+def test_llm_settings_default_to_openai_without_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv(llm_client.BRAIN_CONFIG_ENV, raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-secret")
+
+    settings = llm_client._resolve_llm_settings()
+
+    assert settings.provider == "openai"
+    assert settings.model == "gpt-5.5"
+    assert settings.fast_model == "gpt-5.4-mini"
+    assert settings.api_key == "openai-secret"
+
+
+def test_llm_settings_prefer_openai_config_over_anthropic(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(openai_config_text(tmp_path / "brain"), encoding="utf-8", newline="\n")
+    monkeypatch.setenv(llm_client.BRAIN_CONFIG_ENV, str(config_path))
+    monkeypatch.setenv("CUSTOM_OPENAI_API_KEY", "openai-config-secret")
+    monkeypatch.setenv("CUSTOM_ANTHROPIC_API_KEY", "anthropic-config-secret")
+
+    settings = llm_client._resolve_llm_settings()
+
+    assert settings.provider == "openai"
+    assert settings.model == "gpt-config-model"
+    assert settings.fast_model == "gpt-config-fast-model"
+    assert settings.api_key == "openai-config-secret"
+
+
+def test_llm_settings_fall_back_to_anthropic_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(valid_config_text(tmp_path / "brain"), encoding="utf-8", newline="\n")
+    monkeypatch.setenv(llm_client.BRAIN_CONFIG_ENV, str(config_path))
+    monkeypatch.setenv("CUSTOM_ANTHROPIC_API_KEY", "anthropic-config-secret")
+
+    settings = llm_client._resolve_llm_settings()
+
+    assert settings.provider == "anthropic"
+    assert settings.model == "claude-config-model"
+    assert settings.fast_model == "claude-fast-model"
+    assert settings.api_key == "anthropic-config-secret"
+
+
+def test_llm_settings_invalid_config_raises_llm_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[openai]
+api_key_env = ""
+model = "gpt-config-model"
+fast_model = "gpt-config-fast-model"
+""".strip(),
+        encoding="utf-8",
+        newline="\n",
+    )
+    monkeypatch.setenv(llm_client.BRAIN_CONFIG_ENV, str(config_path))
+
+    with pytest.raises(LLMError) as exc_info:
+        llm_client._resolve_llm_settings()
+
+    assert isinstance(exc_info.value.__cause__, ConfigError)
+
+
+def test_extract_impl_dispatches_to_openai_responses_create(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(openai_config_text(tmp_path / "brain"), encoding="utf-8", newline="\n")
+    monkeypatch.setenv(llm_client.BRAIN_CONFIG_ENV, str(config_path))
+    monkeypatch.setenv("CUSTOM_OPENAI_API_KEY", "openai-config-secret")
+    calls: list[dict[str, object]] = []
+
+    class FakeResponses:
+        def create(self, **kwargs: object) -> object:
+            calls.append(kwargs)
+            return types.SimpleNamespace(output_text='{"ok": true}')
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs: object) -> None:
+            calls.append({"client_kwargs": kwargs})
+            self.responses = FakeResponses()
+
+    fake_openai = types.ModuleType("openai")
+    fake_openai.OpenAI = FakeOpenAI
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+
+    result = llm_client._extract_impl("Return JSON.")
+
+    assert result == '{"ok": true}'
+    assert calls == [
+        {"client_kwargs": {"api_key": "openai-config-secret"}},
+        {
+            "model": "gpt-config-model",
+            "input": "Return JSON.",
+            "max_output_tokens": llm_client.MAX_OUTPUT_TOKENS,
+        },
+    ]

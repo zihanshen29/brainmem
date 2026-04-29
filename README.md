@@ -41,6 +41,12 @@ To capture a note into the current brain root:
 "Remember to review the Phase 1 closeout notes." | mem capture --stdin
 ```
 
+New brain roots use OpenAI by default. Set the API key before commands that call the LLM, such as real ingest, review tier rewrites, `ask --explain`, and promote-chat:
+
+```powershell
+$env:OPENAI_API_KEY = "sk-..."
+```
+
 `mem ingest --dry-run` does not write pages, update the database, or commit changes, but it may still call the configured LLM when there is pending content.
 
 After a real ingest and review flow has populated `pages/`, query the brain root with:
@@ -89,7 +95,7 @@ brain-root/
 
 ## Quality / Verification
 
-- `.\.venv\Scripts\pytest.exe --cov=brain --cov-report=term-missing`: 193 passed, total coverage 88%.
+- `.\.venv\Scripts\pytest.exe`: 200 passed.
 - `.\.venv\Scripts\ruff.exe check .`: passed.
 
 No open questions were found during Task 19 closeout, so `OPEN_QUESTIONS.md` was not created.

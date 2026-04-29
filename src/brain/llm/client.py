@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
-from brain.config import load_config
+from brain.config import AnthropicConfig, OpenAIConfig, load_config
 from brain.exceptions import ConfigError, LLMError
 from brain.llm.prompts import (
     build_compiled_truth_prompt,
@@ -25,9 +25,21 @@ if TYPE_CHECKING:
 
 
 BRAIN_CONFIG_ENV = "BRAIN_CONFIG"
+DEFAULT_OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
+DEFAULT_OPENAI_MODEL = "gpt-5.5"
+DEFAULT_OPENAI_FAST_MODEL = "gpt-5.4-mini"
 DEFAULT_ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY"
 DEFAULT_ANTHROPIC_MODEL = "claude-3-5-haiku-latest"
+DEFAULT_ANTHROPIC_FAST_MODEL = "claude-3-5-haiku-latest"
 MAX_OUTPUT_TOKENS = 4096
+
+
+@dataclass(frozen=True)
+class _LLMSettings:
+    provider: str
+    model: str
+    api_key: str | None
+    fast_model: str
 
 
 @dataclass(frozen=True)
@@ -174,14 +186,59 @@ def _parse_structured_response(response: Any) -> Any:
 
 
 def _extract_impl(prompt: str) -> str:
-    """Call Anthropic and return the model's text response.
+    """Call the configured LLM provider and return the model's text response.
 
     Tests should monkeypatch this function; public helpers are responsible for retry,
     structured JSON parsing, and schema validation.
     """
+    settings = _resolve_llm_settings()
+    if settings.provider == "openai":
+        return _extract_openai(prompt, settings)
+    if settings.provider == "anthropic":
+        return _extract_anthropic(prompt, settings)
+    raise LLMError(f"Unsupported LLM provider: {settings.provider}")
+
+
+def _resolve_anthropic_settings() -> _AnthropicSettings:
+    settings = _resolve_llm_settings(preferred_provider="anthropic")
+    if settings.provider != "anthropic":
+        raise LLMError(f"Configured LLM provider is not Anthropic: {settings.provider}")
+    return _AnthropicSettings(model=settings.model, api_key=settings.api_key)
+
+
+def _resolve_llm_settings(preferred_provider: str | None = None) -> _LLMSettings:
+    config_path = os.environ.get(BRAIN_CONFIG_ENV)
+    if config_path:
+        return _settings_from_config(Path(config_path), preferred_provider=preferred_provider)
+
+    cwd_config = Path.cwd() / "config.toml"
+    if cwd_config.exists():
+        return _settings_from_config(cwd_config, preferred_provider=preferred_provider)
+
+    if preferred_provider == "anthropic":
+        return _default_anthropic_settings()
+    return _default_openai_settings()
+
+
+def _extract_openai(prompt: str, settings: _LLMSettings) -> str:
+    from openai import OpenAI
+
+    client_kwargs = {"api_key": settings.api_key} if settings.api_key else {}
+    client = OpenAI(**client_kwargs)
+    response = client.responses.create(
+        model=settings.model,
+        input=prompt,
+        max_output_tokens=MAX_OUTPUT_TOKENS,
+    )
+    text = getattr(response, "output_text", None)
+    if not isinstance(text, str) or not text.strip():
+        raise LLMError("LLM response did not contain text")
+    return text
+
+
+def _extract_anthropic(prompt: str, settings: _LLMSettings) -> str:
     from anthropic import Anthropic
 
-    settings = _resolve_anthropic_settings()
     client_kwargs = {"api_key": settings.api_key} if settings.api_key else {}
     client = Anthropic(**client_kwargs)
     message = client.messages.create(
@@ -192,32 +249,69 @@ def _extract_impl(prompt: str) -> str:
     return _extract_text_from_message(message)
 
 
-def _resolve_anthropic_settings() -> _AnthropicSettings:
-    config_path = os.environ.get(BRAIN_CONFIG_ENV)
-    if config_path:
-        return _settings_from_config(Path(config_path))
+def _default_openai_settings() -> _LLMSettings:
+    return _LLMSettings(
+        provider="openai",
+        model=os.environ.get("BRAIN_OPENAI_MODEL")
+        or os.environ.get("OPENAI_MODEL")
+        or DEFAULT_OPENAI_MODEL,
+        api_key=os.environ.get(DEFAULT_OPENAI_API_KEY_ENV),
+        fast_model=os.environ.get("BRAIN_OPENAI_FAST_MODEL")
+        or os.environ.get("OPENAI_FAST_MODEL")
+        or DEFAULT_OPENAI_FAST_MODEL,
+    )
 
-    cwd_config = Path.cwd() / "config.toml"
-    if cwd_config.exists():
-        return _settings_from_config(cwd_config)
 
-    return _AnthropicSettings(
+def _default_anthropic_settings() -> _LLMSettings:
+    return _LLMSettings(
+        provider="anthropic",
         model=os.environ.get("BRAIN_ANTHROPIC_MODEL")
         or os.environ.get("ANTHROPIC_MODEL")
         or DEFAULT_ANTHROPIC_MODEL,
         api_key=os.environ.get(DEFAULT_ANTHROPIC_API_KEY_ENV),
+        fast_model=os.environ.get("BRAIN_ANTHROPIC_FAST_MODEL")
+        or os.environ.get("ANTHROPIC_FAST_MODEL")
+        or DEFAULT_ANTHROPIC_FAST_MODEL,
     )
 
 
-def _settings_from_config(path: Path) -> _AnthropicSettings:
+def _settings_from_config(
+    path: Path,
+    *,
+    preferred_provider: str | None = None,
+) -> _LLMSettings:
     try:
         config = load_config(path)
     except ConfigError as exc:
         raise LLMError("Could not load LLM config") from exc
 
-    return _AnthropicSettings(
-        model=config.anthropic.model,
-        api_key=os.environ.get(config.anthropic.api_key_env),
+    provider = preferred_provider or ("openai" if config.openai is not None else "anthropic")
+    if provider == "openai" and config.openai is not None:
+        return _settings_from_section(
+            provider="openai",
+            section=config.openai,
+        )
+    if provider == "anthropic" and config.anthropic is not None:
+        return _settings_from_section(
+            provider="anthropic",
+            section=config.anthropic,
+        )
+
+    if preferred_provider:
+        raise LLMError(f"Config does not contain [{preferred_provider}] LLM settings")
+    raise LLMError("Config does not contain LLM settings")
+
+
+def _settings_from_section(
+    *,
+    provider: str,
+    section: OpenAIConfig | AnthropicConfig,
+) -> _LLMSettings:
+    return _LLMSettings(
+        provider=provider,
+        model=section.model,
+        api_key=os.environ.get(section.api_key_env),
+        fast_model=section.fast_model,
     )
 
 

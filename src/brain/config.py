@@ -1,13 +1,23 @@
 import tomllib
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from brain.exceptions import ConfigError
 
 
 class AnthropicConfig(BaseModel):
     """Anthropic model and key reference settings."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    api_key_env: str = Field(..., min_length=1)
+    model: str = Field(..., min_length=1)
+    fast_model: str = Field(..., min_length=1)
+
+
+class OpenAIConfig(BaseModel):
+    """OpenAI model and key reference settings."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -70,12 +80,20 @@ class Config(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    anthropic: AnthropicConfig
+    openai: OpenAIConfig | None = None
+    anthropic: AnthropicConfig | None = None
     paths: PathsConfig
     ingest: IngestConfig
     tier: TierConfig
     lint: LintConfig
     git: GitConfig
+
+    @model_validator(mode="after")
+    def require_llm_provider(self) -> "Config":
+        """Require at least one configured LLM provider."""
+        if self.openai is None and self.anthropic is None:
+            raise ValueError("At least one LLM provider config is required")
+        return self
 
 
 def load_config(path: Path) -> Config:

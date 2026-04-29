@@ -2,11 +2,11 @@ import os
 from pathlib import Path
 
 from brain.config import (
-    AnthropicConfig,
     Config,
     GitConfig,
     IngestConfig,
     LintConfig,
+    OpenAIConfig,
     PathsConfig,
     TierConfig,
     load_config,
@@ -44,10 +44,10 @@ def _load_or_default(path: Path) -> Config:
 def default_pipeline_config() -> Config:
     """Build the fallback config used by isolated pipeline unit tests."""
     return Config(
-        anthropic=AnthropicConfig(
-            api_key_env="ANTHROPIC_API_KEY",
-            model="claude-3-5-haiku-latest",
-            fast_model="claude-3-5-haiku-latest",
+        openai=OpenAIConfig(
+            api_key_env="OPENAI_API_KEY",
+            model="gpt-5.5",
+            fast_model="gpt-5.4-mini",
         ),
         paths=PathsConfig(brain_root=Path.cwd()),
         ingest=IngestConfig(

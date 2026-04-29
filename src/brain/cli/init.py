@@ -166,10 +166,10 @@ def _write_seed_files(paths: BrainPaths) -> None:
 
 def _config_text(root: Path) -> str:
     root_value = json.dumps(root.as_posix())
-    return f"""[anthropic]
-api_key_env = "ANTHROPIC_API_KEY"
-model = "claude-opus-4-7"
-fast_model = "claude-haiku-4-5"
+    return f"""[openai]
+api_key_env = "OPENAI_API_KEY"
+model = "gpt-5.5"
+fast_model = "gpt-5.4-mini"
 
 [paths]
 brain_root = {root_value}

@@ -5,11 +5,11 @@ from pathlib import Path
 import pytest
 
 from brain.config import (
-    AnthropicConfig,
     Config,
     GitConfig,
     IngestConfig,
     LintConfig,
+    OpenAIConfig,
     PathsConfig,
     TierConfig,
 )
@@ -48,10 +48,10 @@ def utc_datetime(day: int = 28) -> datetime:
 
 def make_config(auto_accept: float = 0.85, auto_reject: float = 0.50) -> Config:
     return Config(
-        anthropic=AnthropicConfig(
-            api_key_env="ANTHROPIC_API_KEY",
-            model="claude-test",
-            fast_model="claude-test-fast",
+        openai=OpenAIConfig(
+            api_key_env="OPENAI_API_KEY",
+            model="gpt-5.5",
+            fast_model="gpt-5.4-mini",
         ),
         paths=PathsConfig(brain_root=Path.cwd()),
         ingest=IngestConfig(
