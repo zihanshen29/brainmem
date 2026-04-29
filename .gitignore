@@ -3,3 +3,30 @@ __pycache__/
 *.egg-info
 brain.log
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# Runtime brain roots and local memory data
+/brain-root/
+/raw/
+/laundry/
+/pages/
+/review/
+/events.jsonl
+/brain.db
+/*.db
+/*.db-wal
+/*.db-shm
+
+# OS/editor noise
+.DS_Store
+Thumbs.db

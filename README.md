@@ -44,7 +44,7 @@ To capture a note into the current brain root:
 New brain roots use DeepSeek V4 Pro and Flash by default. Set the API key before commands that call the LLM, such as real ingest, review tier rewrites, `ask --explain`, and promote-chat:
 
 ```powershell
-$env:DEEPSEEK_API_KEY = "sk-..."
+$env:DEEPSEEK_API_KEY = "<your-deepseek-api-key>"
 ```
 
 `mem ingest --dry-run` does not write pages, update the database, or commit changes, but it may still call the configured LLM when there is pending content.
@@ -82,6 +82,28 @@ brain-root/
   brain.db             SQLite database
   events.jsonl         Append-only event log
 ```
+
+## Privacy And Publishing
+
+This repository is the application code. Runtime brain roots contain personal memory data and should stay private.
+
+Do not publish or commit:
+
+- `brain-root/`
+- `brain.db`, `brain.db-wal`, or `brain.db-shm`
+- `events.jsonl`
+- `raw/`, `laundry/`, `pages/`, or `review/`
+- `.env` or any real API key
+
+Safe to publish:
+
+- `src/`
+- `tests/`
+- `files/`
+- `pyproject.toml`
+- `.env.example`
+
+Plain `mem ask` performs local retrieval. `mem ingest`, `mem ask --explain`, `mem promote-chat`, some review apply actions, and forced page rewrites may send user content to the configured LLM provider.
 
 ## Specs
 
