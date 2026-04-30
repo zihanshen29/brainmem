@@ -7,6 +7,7 @@ import subprocess
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -199,6 +200,47 @@ def test_second_ingest_does_not_reprocess_archived_laundry(
     assert len(detector_calls) == 1
 
 
+def test_ingest_default_auto_reindex_runs_for_touched_pages(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_laundry(brain_root, "Alice started maintaining Brain.")
+    _install_signal_detector(monkeypatch, lambda: _alice_extraction())
+    reindex_calls = _install_reindex_stub(monkeypatch)
+
+    report = _run_ingest(brain_root, source="laundry", auto_reindex=None)
+
+    assert report.processed == 1
+    assert report.errors == []
+    assert reindex_calls == [
+        {
+            "brain_root": brain_root,
+            "page_filter": ["alice"],
+            "no_commit": True,
+        }
+    ]
+
+
+def test_ingest_auto_reindex_failure_is_reported_without_breaking_ingest(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_laundry(brain_root, "Alice started maintaining Brain.")
+    _install_signal_detector(monkeypatch, lambda: _alice_extraction())
+    ingest_module = importlib.import_module("brain.pipeline.ingest")
+
+    def fail_reindex(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("embedding service unavailable")
+
+    monkeypatch.setattr(ingest_module, "reindex", fail_reindex)
+
+    report = _run_ingest(brain_root, source="laundry", auto_reindex=None)
+
+    assert report.processed == 1
+    assert report.facts_added == 1
+    assert report.errors == ["auto-reindex failed: embedding service unavailable"]
+
+
 def test_events_ingest_uses_cursor_to_skip_processed_events(
     brain_root: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -335,6 +377,7 @@ def test_cli_ingest_dry_run_and_source_laundry_output_summary(
 ) -> None:
     _write_laundry(brain_root, "Alice started maintaining Brain.")
     _install_signal_detector(monkeypatch, lambda: _alice_extraction())
+    reindex_calls = _install_reindex_stub(monkeypatch)
     monkeypatch.chdir(brain_root)
 
     dry_run_result = runner.invoke(app, ["ingest", "--dry-run"])
@@ -355,6 +398,29 @@ def test_cli_ingest_dry_run_and_source_laundry_output_summary(
     assert "review_items_created=0" in source_result.stdout
     assert "laundry_archived=1" in source_result.stdout
     assert "dry_run=false" in source_result.stdout
+    assert reindex_calls == [
+        {
+            "brain_root": brain_root,
+            "page_filter": ["alice"],
+            "no_commit": True,
+        }
+    ]
+
+
+def test_cli_ingest_no_auto_reindex_skips_reindex(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_laundry(brain_root, "Alice started maintaining Brain.")
+    _install_signal_detector(monkeypatch, lambda: _alice_extraction())
+    reindex_calls = _install_reindex_stub(monkeypatch)
+    monkeypatch.chdir(brain_root)
+
+    result = runner.invoke(app, ["ingest", "--source", "laundry", "--no-auto-reindex"])
+
+    assert result.exit_code == 0
+    assert "Ingest summary:" in result.stdout
+    assert reindex_calls == []
 
 
 def test_cli_ingest_brain_error_outputs_stderr_and_exit_one(
@@ -381,9 +447,40 @@ def _run_ingest(
     source: str = "all",
     dry_run: bool = False,
     limit: int | None = None,
+    auto_reindex: bool | None = False,
 ) -> Any:
     ingest_module = importlib.import_module("brain.pipeline.ingest")
-    return ingest_module.ingest(root, source=source, dry_run=dry_run, limit=limit)
+    return ingest_module.ingest(
+        root,
+        source=source,
+        dry_run=dry_run,
+        limit=limit,
+        auto_reindex=auto_reindex,
+    )
+
+
+def _install_reindex_stub(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+
+    def fake_reindex(
+        brain_root: Path,
+        *,
+        page_filter: list[str] | None = None,
+        no_commit: bool = True,
+        **_kwargs: object,
+    ) -> SimpleNamespace:
+        calls.append(
+            {
+                "brain_root": Path(brain_root),
+                "page_filter": list(page_filter or []),
+                "no_commit": no_commit,
+            }
+        )
+        return SimpleNamespace(errors=[])
+
+    ingest_module = importlib.import_module("brain.pipeline.ingest")
+    monkeypatch.setattr(ingest_module, "reindex", fake_reindex)
+    return calls
 
 
 def _install_signal_detector(

@@ -26,15 +26,25 @@ def init_db(path: Path) -> None:
     try:
         migrations = sorted(MIGRATIONS_DIR.glob("*.sql"), key=_migration_version)
         conn = connect(path)
-        with conn:
-            current_version = conn.execute("PRAGMA user_version").fetchone()[0]
-            for migration in migrations:
-                version = _migration_version(migration)
-                if version <= current_version:
-                    continue
-                sql = migration.read_text(encoding="utf-8")
-                conn.executescript(sql)
-                conn.execute(f"PRAGMA user_version = {version}")
+        current_version = conn.execute("PRAGMA user_version").fetchone()[0]
+        for migration in migrations:
+            version = _migration_version(migration)
+            if version <= current_version:
+                continue
+            sql = migration.read_text(encoding="utf-8")
+            try:
+                conn.executescript(
+                    f"""
+                    BEGIN;
+                    {sql}
+                    PRAGMA user_version = {version};
+                    COMMIT;
+                    """
+                )
+            except sqlite3.Error:
+                conn.rollback()
+                raise
+            current_version = version
     except (OSError, sqlite3.Error, ValueError) as exc:
         raise DBError(f"Could not initialize database: {path}") from exc
     finally:

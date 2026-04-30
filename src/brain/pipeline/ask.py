@@ -6,12 +6,13 @@ import sqlite3
 from collections import Counter
 from contextlib import suppress
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from brain.config import EmbeddingConfig, load_config
 from brain.exceptions import BrainError
-from brain.models import Page, PageType
+from brain.models import EmbeddingChunk, FusedResult, Page, PageType, RetrievalHit
 from brain.pages import parse_page
 from brain.pages.timeline import parse_entry
 from brain.paths import BrainPaths
@@ -21,6 +22,7 @@ SUMMARY_LIMIT = 200
 RECENT_TIMELINE_LIMIT = 3
 BACKLINK_BOOST = 1.5
 ENTITY_MATCH_BASE_SCORE = 1.0
+AskMode = Literal["hybrid", "keyword-only", "semantic", "sql"]
 
 
 class AskPageSummary(BaseModel):
@@ -35,6 +37,7 @@ class AskPageSummary(BaseModel):
     score: float
     compiled_truth: str
     recent_timeline: list[str] = Field(default_factory=list)
+    debug: dict[str, Any] = Field(default_factory=dict)
 
 
 class AskModeTrace(BaseModel):
@@ -47,6 +50,14 @@ class AskModeTrace(BaseModel):
     matched_entities: list[str] = Field(default_factory=list)
     boosted_pages: list[str] = Field(default_factory=list)
     explain: str | None = None
+    mode: str | None = None
+    effective_mode: str | None = None
+    classifier: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    vector: list[dict[str, Any]] = Field(default_factory=list)
+    keyword: list[dict[str, Any]] = Field(default_factory=list)
+    sql_path: list[dict[str, Any]] = Field(default_factory=list)
+    rrf: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class AskResult(BaseModel):
@@ -61,6 +72,9 @@ class AskResult(BaseModel):
     answer: str | None = None
     sources: list[str] = Field(default_factory=list)
     trace: AskModeTrace | None = None
+    mode: str = "keyword-only"
+    effective_mode: str = "keyword-only"
+    warnings: list[str] = Field(default_factory=list)
 
     @property
     def pages(self) -> list[AskPageSummary]:
@@ -84,12 +98,10 @@ def ask(
     page_type: PageType | str | None = None,
     explain: bool = False,
     show_sql: bool = False,
+    mode: AskMode | str | None = None,
+    debug: bool = False,
 ) -> AskResult:
-    """Retrieve relevant canonical pages for a question.
-
-    Retrieval is deterministic and local: markdown pages provide text scores, while
-    SQLite is used only for fixed entity/alias and backlink lookups.
-    """
+    """Retrieve relevant canonical pages for a question."""
     normalized_query = query.strip()
     if not normalized_query:
         raise BrainError("query must not be empty")
@@ -98,49 +110,107 @@ def ask(
 
     paths = BrainPaths(Path(brain_root))
     selected_type = _normalize_page_type(page_type)
-    trace = AskModeTrace() if show_sql or explain else None
+    config = load_config(paths.config_path)
+    requested_mode = _normalize_mode(mode or config.retrieval.default_mode)
+    trace = AskModeTrace(mode=requested_mode) if show_sql or explain or debug else None
+    classifier = _classify_query(normalized_query)
+    if trace is not None:
+        trace.classifier = classifier
 
-    candidates = _load_page_candidates(paths, selected_type)
+    candidates = _load_page_candidates(paths, None)
     query_tokens = _tokens(normalized_query)
     if trace is not None:
         trace.query_tokens = query_tokens
 
-    scores = {
-        candidate.page.frontmatter.slug: _score_tokens(query_tokens, candidate.raw_markdown)
-        for candidate in candidates
-    }
+    warnings: list[str] = []
+    effective_mode = requested_mode
+    conn = _connect_optional(paths.db_path)
+    try:
+        fused: list[FusedResult] = []
+        if (
+            requested_mode == "hybrid"
+            and classifier == "structured"
+            and config.retrieval.sql_shortcut_enabled
+        ):
+            fused = _sql_results(conn, normalized_query, config.retrieval.final_top, trace)
+            if fused:
+                effective_mode = "sql"
 
-    matched_entities: list[str] = []
-    boosted_pages: set[str] = set()
-    if paths.db_path.exists():
-        conn = _connect_readonly(paths.db_path)
-        try:
-            matched_entities = _matched_entity_ids(
+        if requested_mode == "hybrid" and effective_mode == "hybrid" and not _vector_path_available(conn):
+            effective_mode = "keyword-only"
+            warnings.append(
+                "No usable embeddings found. Falling back to keyword-only mode. "
+                "Run `mem reindex` to enable hybrid retrieval."
+            )
+
+        if fused:
+            pass
+        elif effective_mode == "semantic":
+            fused = _semantic_results(
+                conn,
+                normalized_query,
+                config.retrieval.top_per_path,
+                config.embedding,
+                trace,
+            )
+        elif effective_mode == "sql":
+            fused = _sql_results(conn, normalized_query, config.retrieval.final_top, trace)
+        elif effective_mode == "hybrid":
+            fused = _hybrid_results(
                 conn,
                 normalized_query,
                 query_tokens,
-                trace if show_sql else None,
+                candidates,
+                config.retrieval.top_per_path,
+                config.retrieval.rrf_k,
+                config.embedding,
+                show_sql,
+                trace,
             )
-            _boost_entity_pages(
-                matched_entities,
-                scores,
-                {candidate.page.frontmatter.slug for candidate in candidates},
-            )
-            boosted_pages = _boost_backlink_sources(
+        else:
+            fused = _keyword_only_results(
                 conn,
-                matched_entities,
-                scores,
-                {candidate.page.frontmatter.slug for candidate in candidates},
-                trace if show_sql else None,
+                normalized_query,
+                query_tokens,
+                candidates,
+                show_sql,
+                trace,
             )
-        finally:
+    except _VectorUnavailable as exc:
+        if requested_mode == "hybrid":
+            effective_mode = "keyword-only"
+            warnings.append(
+                f"Vector retrieval unavailable ({exc}). Falling back to keyword-only mode. "
+                "Run `mem reindex` to enable hybrid retrieval."
+            )
+            fused = _keyword_only_results(
+                conn,
+                normalized_query,
+                query_tokens,
+                candidates,
+                show_sql,
+                trace,
+            )
+        else:
+            warnings.append(f"Vector retrieval unavailable: {exc}")
+            fused = []
+    finally:
+        if conn is not None:
             conn.close()
 
-    if trace is not None:
-        trace.matched_entities = matched_entities
-        trace.boosted_pages = sorted(boosted_pages)
+    if selected_type is not None:
+        candidate_types = {
+            candidate.page.frontmatter.slug: candidate.page.frontmatter.type for candidate in candidates
+        }
+        fused = [
+            item for item in fused if candidate_types.get(item.page_slug) is selected_type
+        ]
 
-    summaries = _summaries(candidates, scores, top)
+    if trace is not None:
+        trace.effective_mode = effective_mode
+        trace.warnings = warnings
+
+    summaries = _summaries_from_fused(candidates, fused[:top])
     answer: str | None = None
     sources: list[str] = []
     if explain:
@@ -156,7 +226,381 @@ def ask(
         answer=answer,
         sources=sources,
         trace=trace,
+        mode=requested_mode,
+        effective_mode=effective_mode,
+        warnings=warnings,
     )
+
+
+class _VectorUnavailable(Exception):
+    """Raised when semantic retrieval cannot be used."""
+
+
+def _normalize_mode(mode: str) -> AskMode:
+    if mode not in {"hybrid", "keyword-only", "semantic", "sql"}:
+        raise BrainError(f"unsupported ask mode: {mode}")
+    return mode  # type: ignore[return-value]
+
+
+def _classify_query(query: str) -> str:
+    from brain.pipeline.retrieval.classifier import classify_query
+
+    return classify_query(query)
+
+
+def _hybrid_results(
+    conn: sqlite3.Connection | None,
+    query: str,
+    query_tokens: list[str],
+    candidates: list[_PageCandidate],
+    top_per_path: int,
+    rrf_k: int,
+    embedding_config: EmbeddingConfig,
+    show_sql: bool,
+    trace: AskModeTrace | None,
+) -> list[FusedResult]:
+    vector_hits = _vector_hits(conn, query, top_per_path, embedding_config)
+    keyword_hits = _keyword_hits(query, query_tokens, candidates, top_per_path)
+    sql_hits = _sql_hits(conn, query, query_tokens, candidates, show_sql, trace, top_per_path)
+    fused = _rrf_fuse(vector_hits, keyword_hits, sql_hits, k=rrf_k)
+    _trace_hits(trace, "vector", vector_hits)
+    _trace_hits(trace, "keyword", keyword_hits)
+    _trace_hits(trace, "sql", sql_hits)
+    _trace_fused(trace, fused)
+    return fused
+
+
+def _semantic_results(
+    conn: sqlite3.Connection | None,
+    query: str,
+    top_per_path: int,
+    embedding_config: EmbeddingConfig,
+    trace: AskModeTrace | None,
+) -> list[FusedResult]:
+    vector_hits = _vector_hits(conn, query, top_per_path, embedding_config)
+    fused = _rrf_fuse(vector_hits, k=1)
+    _trace_hits(trace, "vector", vector_hits)
+    _trace_fused(trace, fused)
+    return fused
+
+
+def _sql_results(
+    conn: sqlite3.Connection | None,
+    query: str,
+    top: int,
+    trace: AskModeTrace | None,
+) -> list[FusedResult]:
+    if conn is None:
+        return []
+    try:
+        from brain.pipeline.retrieval.sql_direct import sql_direct_query
+
+        fused = list(sql_direct_query(conn, query, top))
+    except ImportError:
+        fused = []
+    _trace_fused(trace, fused)
+    _trace_hits(trace, "sql", [hit for result in fused for hit in result.chunks])
+    return fused
+
+
+def _keyword_only_results(
+    conn: sqlite3.Connection | None,
+    query: str,
+    query_tokens: list[str],
+    candidates: list[_PageCandidate],
+    show_sql: bool,
+    trace: AskModeTrace | None,
+) -> list[FusedResult]:
+    scores = {
+        candidate.page.frontmatter.slug: _score_tokens(query_tokens, candidate.raw_markdown)
+        for candidate in candidates
+    }
+    matched_entities: list[str] = []
+    boosted_pages: set[str] = set()
+    if conn is not None:
+        matched_entities = _matched_entity_ids(
+            conn,
+            query,
+            query_tokens,
+            trace if show_sql else None,
+        )
+        _boost_entity_pages(
+            matched_entities,
+            scores,
+            {candidate.page.frontmatter.slug for candidate in candidates},
+        )
+        boosted_pages = _boost_backlink_sources(
+            conn,
+            matched_entities,
+            scores,
+            {candidate.page.frontmatter.slug for candidate in candidates},
+            trace if show_sql else None,
+        )
+
+    if trace is not None:
+        trace.matched_entities = matched_entities
+        trace.boosted_pages = sorted(boosted_pages)
+
+    ranked = sorted(
+        [candidate for candidate in candidates if scores.get(candidate.page.frontmatter.slug, 0.0) > 0],
+        key=lambda candidate: (
+            -scores.get(candidate.page.frontmatter.slug, 0.0),
+            candidate.relative_path,
+        ),
+    )
+    hits = [
+        RetrievalHit(
+            page_slug=candidate.page.frontmatter.slug,
+            chunk_kind="compiled_truth",
+            chunk_id="main",
+            score=round(scores[candidate.page.frontmatter.slug], 6),
+            rank=index,
+            path="keyword",
+        )
+        for index, candidate in enumerate(ranked, start=1)
+    ]
+    _trace_hits(trace, "keyword", hits)
+    fused = [
+        FusedResult(
+            page_slug=hit.page_slug,
+            chunks=[hit],
+            rrf_score=hit.score,
+            final_rank=hit.rank,
+        )
+        for hit in hits
+    ]
+    _trace_fused(trace, fused)
+    return fused
+
+
+def _keyword_hits(
+    query: str,
+    query_tokens: list[str],
+    candidates: list[_PageCandidate],
+    top: int,
+) -> list[RetrievalHit]:
+    chunks = _chunks_from_candidates(candidates)
+    try:
+        from brain.pipeline.retrieval.keyword import bm25_search
+
+        return list(bm25_search(chunks, query, top))
+    except ImportError:
+        pass
+
+    scored = [(candidate, _score_tokens(query_tokens, _chunk_text_from_candidate(candidate))) for candidate in candidates]
+    ranked = sorted(
+        [(candidate, score) for candidate, score in scored if score > 0],
+        key=lambda item: (-item[1], item[0].relative_path),
+    )
+    return [
+        RetrievalHit(
+            page_slug=candidate.page.frontmatter.slug,
+            chunk_kind="compiled_truth",
+            chunk_id="main",
+            score=round(score, 6),
+            rank=index,
+            path="keyword",
+        )
+        for index, (candidate, score) in enumerate(ranked[:top], start=1)
+    ]
+
+
+def _sql_hits(
+    conn: sqlite3.Connection | None,
+    query: str,
+    query_tokens: list[str],
+    candidates: list[_PageCandidate],
+    show_sql: bool,
+    trace: AskModeTrace | None,
+    top: int,
+) -> list[RetrievalHit]:
+    if conn is None:
+        return []
+    try:
+        from brain.pipeline.retrieval.sql_match import sql_entity_match
+
+        hits = list(sql_entity_match(conn, query, top))
+        _trace_hits(trace, "sql", hits)
+        return hits
+    except ImportError:
+        pass
+
+    candidate_slugs = {candidate.page.frontmatter.slug for candidate in candidates}
+    matched_entities = _matched_entity_ids(conn, query, query_tokens, trace if show_sql else None)
+    scores: dict[str, float] = {}
+    _boost_entity_pages(matched_entities, scores, candidate_slugs)
+    boosted_pages = _boost_backlink_sources(
+        conn,
+        matched_entities,
+        scores,
+        candidate_slugs,
+        trace if show_sql else None,
+    )
+    if trace is not None:
+        trace.matched_entities = matched_entities
+        trace.boosted_pages = sorted(boosted_pages)
+    ranked = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
+    return [
+        RetrievalHit(
+            page_slug=slug,
+            chunk_kind="compiled_truth",
+            chunk_id="main",
+            score=score,
+            rank=index,
+            path="sql",
+        )
+        for index, (slug, score) in enumerate(ranked[:top], start=1)
+    ]
+
+
+def _vector_hits(
+    conn: sqlite3.Connection | None,
+    query: str,
+    top: int,
+    embedding_config: EmbeddingConfig,
+) -> list[RetrievalHit]:
+    if conn is None:
+        raise _VectorUnavailable("database is unavailable")
+    try:
+        from brain.pipeline.retrieval.vector import vector_search as retrieval_vector_search
+    except ImportError as exc:
+        raise _VectorUnavailable("retrieval vector module is unavailable") from exc
+    try:
+        from brain.llm.embedding import OpenAICompatibleEmbeddingClient
+
+        client = OpenAICompatibleEmbeddingClient(embedding_config)
+        return list(retrieval_vector_search(conn, query, client, top=top))
+    except Exception as exc:
+        raise _VectorUnavailable(str(exc)) from exc
+
+
+def _rrf_fuse(*paths: list[RetrievalHit], k: int) -> list[FusedResult]:
+    try:
+        from brain.pipeline.retrieval.rrf import rrf_fuse as retrieval_rrf_fuse
+    except ImportError:
+        retrieval_rrf_fuse = None
+    if retrieval_rrf_fuse is not None:
+        return list(retrieval_rrf_fuse(*paths, k=k))
+
+    page_scores: dict[str, dict[str, Any]] = {}
+    for hits in paths:
+        for hit in hits:
+            data = page_scores.setdefault(hit.page_slug, {"score": 0.0, "chunks": []})
+            data["score"] += 1.0 / (k + hit.rank)
+            data["chunks"].append(hit)
+    fused = [
+        FusedResult(
+            page_slug=slug,
+            chunks=data["chunks"],
+            rrf_score=data["score"],
+            final_rank=0,
+        )
+        for slug, data in page_scores.items()
+    ]
+    fused.sort(key=lambda result: (-result.rrf_score, result.page_slug))
+    for index, result in enumerate(fused, start=1):
+        result.final_rank = index
+    return fused
+
+
+def _summaries_from_fused(
+    candidates: list[_PageCandidate],
+    fused: list[FusedResult],
+) -> list[AskPageSummary]:
+    candidates_by_slug = {candidate.page.frontmatter.slug: candidate for candidate in candidates}
+    summaries: list[AskPageSummary] = []
+    for result in fused:
+        candidate = candidates_by_slug.get(result.page_slug)
+        if candidate is None:
+            continue
+        page = candidate.page
+        debug = {
+            "rrf_score": result.rrf_score,
+            "final_rank": result.final_rank,
+            "paths": {hit.path: hit.rank for hit in result.chunks},
+        }
+        summaries.append(
+            AskPageSummary(
+                page_type=page.frontmatter.type,
+                slug=page.frontmatter.slug,
+                title=page.frontmatter.title,
+                relative_path=candidate.relative_path,
+                score=round(result.rrf_score, 6),
+                compiled_truth=page.compiled_truth[:SUMMARY_LIMIT],
+                recent_timeline=_recent_timeline(page.timeline),
+                debug=debug,
+            )
+        )
+    return summaries
+
+
+def _chunk_text_from_candidate(candidate: _PageCandidate) -> str:
+    page = candidate.page
+    timeline_text = "\n".join(page.timeline)
+    return f"{page.frontmatter.title}\n\n{page.compiled_truth}\n\n{timeline_text}"
+
+
+def _chunks_from_candidates(candidates: list[_PageCandidate]) -> list[EmbeddingChunk]:
+    return [
+        EmbeddingChunk(
+            page_slug=candidate.page.frontmatter.slug,
+            chunk_kind="compiled_truth",
+            chunk_id="main",
+            text=_chunk_text_from_candidate(candidate),
+            text_preview=candidate.page.compiled_truth[:SUMMARY_LIMIT],
+        )
+        for candidate in candidates
+    ]
+
+
+def _trace_hits(trace: AskModeTrace | None, path: str, hits: list[RetrievalHit]) -> None:
+    if trace is None:
+        return
+    rows = [
+        {
+            "page_slug": hit.page_slug,
+            "chunk_kind": hit.chunk_kind,
+            "chunk_id": hit.chunk_id,
+            "score": hit.score,
+            "rank": hit.rank,
+            "path": hit.path,
+        }
+        for hit in hits[:10]
+    ]
+    if path == "vector":
+        trace.vector = rows
+    elif path == "keyword":
+        trace.keyword = rows
+    elif path == "sql":
+        trace.sql_path = rows
+
+
+def _trace_fused(trace: AskModeTrace | None, fused: list[FusedResult]) -> None:
+    if trace is None:
+        return
+    trace.rrf = [
+        {
+            "page_slug": result.page_slug,
+            "rrf_score": result.rrf_score,
+            "final_rank": result.final_rank,
+            "paths": {hit.path: hit.rank for hit in result.chunks},
+        }
+        for result in fused[:10]
+    ]
+
+
+def _vector_path_available(conn: sqlite3.Connection | None) -> bool:
+    if conn is None:
+        return False
+    try:
+        import sqlite_vec  # noqa: F401
+    except ImportError:
+        return False
+    try:
+        row = conn.execute("SELECT COUNT(*) AS count FROM embedding_index").fetchone()
+    except sqlite3.Error:
+        return False
+    return row is not None and int(row["count"]) > 0
 
 
 def _load_page_candidates(
@@ -356,6 +800,21 @@ def _connect_readonly(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _connect_optional(path: Path) -> sqlite3.Connection | None:
+    if not path.exists():
+        return None
+    try:
+        from brain.db.connection import connect
+
+        return connect(path)
+    except Exception:
+        pass
+    try:
+        return _connect_readonly(path)
+    except sqlite3.Error:
+        return None
 
 
 def _relative(paths: BrainPaths, path: Path) -> str:

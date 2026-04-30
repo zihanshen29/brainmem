@@ -1,7 +1,7 @@
 # BrainMem
 
 <p align="center">
-  <strong>Local-first memory for agents, backed by Markdown and SQLite.</strong>
+  <strong>A local-first life memory system for people and agents.</strong>
 </p>
 
 <p align="center">
@@ -11,15 +11,44 @@
 <p align="center">
   <img alt="Python 3.11" src="https://img.shields.io/badge/Python-3.11-3776AB">
   <img alt="CLI mem" src="https://img.shields.io/badge/CLI-mem-111827">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-207%20passed-16A34A">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-335%20passed-16A34A">
   <img alt="Local first" src="https://img.shields.io/badge/local--first-Markdown%20%2B%20SQLite-0F766E">
 </p>
 
 ## What It Is
 
-BrainMem is a personal memory system designed for coding agents and power users. It keeps durable knowledge in an Obsidian-friendly Markdown wiki, uses SQLite for deterministic indexes and decisions, and exposes everything through a `mem` CLI.
+BrainMem is a local-first memory system for recording a person's long-running life, work, learning, projects, relationships, decisions, and conversations as durable knowledge. It is designed for people who want their own private memory base, and for coding agents that need a reliable, inspectable source of personal context.
+
+The core idea is a **memory compiler**: raw notes, imported files, chats, and event logs are compiled into an Obsidian-friendly Markdown wiki plus SQLite indexes. The system keeps provenance, timeline history, review queues, and structured facts instead of silently rewriting a hidden vector database.
 
 It is local-first by default: your runtime brain root stays on your machine. LLM calls are explicit and only happen for commands that need extraction, rewriting, or explanation.
+
+Phase 2 adds hybrid retrieval, sqlite-vec embeddings, bulk import for Markdown/Text/PDF/JSONL, import progress tracking, cost estimates, and status telemetry.
+
+## Why It Is Different
+
+Most AI memory systems optimize for application integration: add a message, search memories, inject context. BrainMem optimizes for **personal memory ownership**. It treats memory as a long-term knowledge base that should be readable, editable, rebuildable, and auditable years later.
+
+Key design choices:
+
+- **Life-scale scope:** meant to hold notes, reading, chats, project history, decisions, observations, preferences, and personal knowledge over years.
+- **Local-first source of truth:** Markdown pages, SQLite, and append-only JSONL stay in your own directory.
+- **Human-in-the-loop memory:** conflicts, low-confidence facts, new entities, and tier changes can go through review before becoming durable truth.
+- **Provenance by default:** pages carry timeline entries and sources; derived indexes can be rebuilt from the source files.
+- **Hybrid retrieval instead of vector-only recall:** `mem ask` combines vector search, BM25 keyword search, SQL/entity matching, and RRF.
+- **Agent-friendly but not agent-owned:** agents can use it, but they do not silently control your long-term memory.
+
+## Good Fit
+
+BrainMem is useful for:
+
+- building a private life log and long-term personal knowledge base;
+- giving coding agents stable context about your projects, preferences, decisions, and history;
+- importing old notes, Markdown vaults, PDFs, text files, and exported AI chats;
+- keeping an auditable memory trail for research, writing, engineering, or personal operations;
+- users who prefer files and SQLite over opaque hosted memory platforms.
+
+It is not trying to be a multi-user SaaS memory backend, a hosted chatbot platform, a graph database service, or a fully autonomous self-editing agent runtime.
 
 ## Highlights
 
@@ -28,9 +57,11 @@ It is local-first by default: your runtime brain root stays on your machine. LLM
 | Knowledge base | Markdown pages with frontmatter, compiled truth, timeline, and sources |
 | Runtime state | SQLite schema for entities, facts, backlinks, reviews, lint results, and tier proposals |
 | Event ledger | Append-only JSONL event log with cursor-based ingest |
-| CLI workflow | `init`, `capture`, `ingest`, `review`, `lint`, `ask`, `rebuild`, `status`, `promote-chat`, `entity` |
-| LLM support | DeepSeek V4 by default; configurable DeepSeek/OpenAI-compatible, OpenAI, or Anthropic provider |
-| Privacy boundary | Plain `mem ask` is local retrieval; `mem ingest` and `mem ask --explain` can call the configured LLM |
+| Hybrid retrieval | `mem ask` uses vector + keyword + SQL matching with RRF, with keyword-only fallback |
+| Bulk import | `mem import` turns `.md`, `.txt`, `.pdf`, and `.jsonl` files into laundry items with resumable jobs |
+| CLI workflow | `init`, `capture`, `ingest`, `reindex`, `import`, `cost-estimate`, `ask`, `review`, `lint`, `rebuild`, `status`, `promote-chat`, `entity` |
+| LLM support | DeepSeek V4 by default for LLM work; OpenAI or OpenAI-compatible embeddings; Anthropic remains configurable |
+| Privacy boundary | Plain `mem ask` retrieval is local; `mem reindex` calls the embedding provider; `mem ingest` and `mem ask --explain` can call the configured LLM |
 
 ## Quick Start
 
@@ -45,21 +76,19 @@ py -3.11 -m venv .venv
 python -m pip install --upgrade pip
 pip install -e ".[dev]"
 
+$env:OPENAI_API_KEY = "<your-openai-or-compatible-embedding-key>"
 mem --version
 mem init --root .\brain-root
 Set-Location .\brain-root
 mem status
 ```
 
-Capture a note:
+Capture, ingest, reindex, and ask:
 
 ```powershell
 "Remember to review the Phase 1 closeout notes." | mem capture --stdin
-```
-
-Use local retrieval:
-
-```powershell
+mem ingest --source laundry
+mem reindex
 mem ask "What should I review?"
 ```
 
@@ -67,11 +96,19 @@ Enable LLM-backed workflows:
 
 ```powershell
 $env:DEEPSEEK_API_KEY = "<your-deepseek-api-key>"
-mem ingest --source laundry
 mem ask "What changed recently?" --explain
 ```
 
-`mem init` writes a DeepSeek config by default. Advanced users can edit `config.toml` to use `[deepseek]` for DeepSeek or another OpenAI-compatible endpoint, `[openai]` for OpenAI, or `[anthropic]` for Anthropic. Store only environment variable names in config; keep real API keys in the environment.
+Bulk import existing material:
+
+```powershell
+mem cost-estimate .\notes --kind md,txt,pdf,jsonl
+mem import .\notes --kind md,txt,pdf,jsonl --yes
+mem ingest --source laundry
+mem reindex
+```
+
+`mem init` writes a DeepSeek config by default for LLM extraction/rewrite work, and an OpenAI-compatible embedding config for `mem reindex`. Advanced users can mix providers by editing `config.toml`: `[deepseek]` for DeepSeek or compatible chat APIs, `[openai]` for OpenAI, `[anthropic]` for Anthropic, and `[embedding]` for OpenAI or another OpenAI-compatible embedding endpoint. Store only environment variable names in config; keep real API keys in the environment.
 
 ## Data Layout
 
@@ -118,14 +155,14 @@ Commands that may send content to the configured LLM:
 
 ## Verification
 
-The implemented Phase 1 build has been checked with:
+The implemented Phase 2 build is checked with:
 
 ```powershell
 .\.venv\Scripts\pytest.exe
 .\.venv\Scripts\ruff.exe check .
 ```
 
-Latest local result: `226 passed`, `ruff` passed.
+Latest local result: `335 passed`, `ruff` passed.
 
 ## Specs
 

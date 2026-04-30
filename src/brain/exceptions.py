@@ -22,5 +22,9 @@ class LLMError(BrainError):
     """Raised when LLM operations fail."""
 
 
+class EmbeddingError(BrainError):
+    """Raised when embedding operations fail."""
+
+
 class GitError(BrainError):
     """Raised when git operations fail."""

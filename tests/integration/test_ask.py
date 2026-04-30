@@ -37,6 +37,7 @@ def test_cli_ask_default_output_lists_ranked_pages(
     assert "Compiled truth: Alice maintains the Brain memory system." in result.stdout
     assert "Recent: 2026-04-28: Alice started the ask CLI task." in result.stdout
     assert "Score: " in result.stdout
+    assert "Falling back to keyword-only mode" in result.stderr
 
 
 def test_cli_ask_type_filters_results(brain_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -71,6 +72,63 @@ def test_cli_ask_sql_outputs_trace_and_results(
     assert "FROM entities" in result.stdout
     assert "Params: ['Brain', 'Brain']" in result.stdout
     assert "1. [" in result.stdout
+
+
+def test_cli_ask_keyword_only_mode_does_not_warn(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(brain_root)
+
+    result = runner.invoke(app, ["ask", "Alice Brain", "--mode", "keyword-only"])
+
+    assert result.exit_code == 0
+    assert "1. [entity] alice - Alice" in result.stdout
+    assert "Falling back to keyword-only mode" not in result.stderr
+
+
+def test_cli_ask_uses_config_default_mode_when_mode_is_omitted(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_retrieval_default_mode(brain_root, "keyword-only")
+    monkeypatch.chdir(brain_root)
+
+    result = runner.invoke(app, ["ask", "Alice Brain"])
+
+    assert result.exit_code == 0
+    assert "1. [entity] alice - Alice" in result.stdout
+    assert "Falling back to keyword-only mode" not in result.stderr
+
+
+def test_cli_ask_explicit_mode_overrides_config_default(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_retrieval_default_mode(brain_root, "keyword-only")
+    monkeypatch.chdir(brain_root)
+
+    result = runner.invoke(app, ["ask", "Alice Brain", "--mode", "hybrid"])
+
+    assert result.exit_code == 0
+    assert "1. [entity] alice - Alice" in result.stdout
+    assert "Falling back to keyword-only mode" in result.stderr
+
+
+def test_cli_ask_debug_outputs_paths_and_rrf(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(brain_root)
+
+    result = runner.invoke(app, ["ask", "Alice Brain", "--debug"])
+
+    assert result.exit_code == 0
+    assert "Vector path:" in result.stdout
+    assert "Keyword path:" in result.stdout
+    assert "SQL path:" in result.stdout
+    assert "RRF fusion:" in result.stdout
+    assert "Warning: No usable embeddings found." in result.stderr
 
 
 def test_cli_ask_explain_outputs_mocked_answer(
@@ -167,3 +225,13 @@ def _write_ask_pages(root: Path) -> None:
 
 def _write_page(root: Path, *, dirname: str, page: Page) -> None:
     write_page(root / "pages" / dirname / f"{page.frontmatter.slug}.md", page)
+
+
+def _set_retrieval_default_mode(root: Path, mode: str) -> None:
+    config_path = root / "config.toml"
+    text = config_path.read_text(encoding="utf-8")
+    config_path.write_text(
+        text.replace('default_mode = "hybrid"', f'default_mode = "{mode}"'),
+        encoding="utf-8",
+        newline="\n",
+    )

@@ -40,7 +40,7 @@
 
 L0 是整个系统的"地基"，**不可变**。所有上层数据都可以从 L0 重建。结构、event 格式、laundry 归档逻辑保持 Phase 1 设计。
 
-Phase 2 的一个微小调整：`mem import` 大批量导入素材时，会把它们先放进 `~/brain/laundry/<source-tag>/` 子目录（例如 `laundry/obsidian-import/`、`laundry/chatgpt-history/`），便于追溯素材来源、便于 cost estimate。**这只是约定，不是强制**——手动 capture 的素材仍然直接放 laundry 根目录。
+Phase 2 的一个微小调整：`mem import` 大批量导入素材时，会把它们先放进 `~/brain/laundry/import-<job-id>/` 子目录，便于追溯素材来源、查看 job 状态和做 cost estimate。手动 capture 的素材仍然直接放 laundry 根目录。
 
 ## L1 — Wiki (Phase 1, 未变)
 
@@ -96,9 +96,9 @@ query
 
 这类查询答案在 facts 表里就是确切的，向量相似度反而会引入"差不多但不对"的页面。`mem ask` 里有一个轻量的 query classifier（纯规则，不调 LLM）判断是否走 SQL 短路，否则进入三路 RRF。规则识别不了的结构化查询直接走 hybrid fallback。
 
-### `--keyword-only` 兜底
+### `--mode keyword-only` 兜底
 
-Phase 1 的纯关键词路径保留，作为 `mem ask --keyword-only` 触发。这给将来 hybrid 出 bug 时提供 fallback。
+Phase 1 的纯关键词路径保留，作为 `mem ask --mode keyword-only` 触发。这给将来 hybrid 出 bug 时提供 fallback。
 
 ### `--debug` 模式
 
@@ -153,7 +153,7 @@ import(path):
 - 用户可能想在 ingest 之前预览/筛选 laundry 里的内容
 - 错误隔离更清晰：import 出问题就重试 import，ingest 出问题就重试 ingest
 
-如果用户希望一气呵成，提供 `mem import <path> --then-ingest` 的快捷组合。
+如果用户希望一气呵成，当前推荐显式串联：`mem import <path> --yes`，然后 `mem ingest`。`mem ingest` 会按配置自动触发增量 reindex；需要跳过时使用 `mem ingest --no-auto-reindex`。
 
 ### 文件类型处理器
 

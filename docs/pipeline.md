@@ -414,19 +414,20 @@ RRF fusion (top 5):
 mem import <path>                              # 走完整流程
 mem import <path> --dry-run                    # 只 cost estimate, 不写
 mem import <path> --kind md,txt,pdf,jsonl      # 限定文件类型
-mem import <path> --then-ingest                # import 后自动 ingest
 mem import --resume                            # 继续上次中断的 import
-mem import --status                            # 查看进行中的 import
+mem import --status                            # 查看最近 import job
+mem import <job-id> --status                   # 查看指定 import job
 mem import --abort <job-id>                    # 中止
+mem import --list-jobs                         # 列出最近 job
 ```
 
 ### 算法
 
 ```
-import(path, kinds=None, dry_run=False, then_ingest=False):
+import(path, kinds=None, dry_run=False):
     1. discover_files(path, kinds)
        → list[(file_path, kind, hash)]
-       skip 已经在 import_files 里的 (基于 file_hash, 跨 job 去重)
+       skip 已经成功 extracted/ingested 的 file_hash；aborted job 中未抽取文件可重新 import
 
     2. cost_estimate(files)
        → CostEstimate
@@ -449,14 +450,10 @@ import(path, kinds=None, dry_run=False, then_ingest=False):
                 append_event(EventKind.BULK_IMPORTED, ...)
             except Exception as exc:
                 mark_failed(file, exc)
-        git_commit(f"import: batch {batch_num} for job {job.id}")
+        commit DB progress
 
     7. if all files done:
         update job status = 'completed'
-
-    8. if then_ingest:
-        ingest(brain_root, source='laundry')
-        # auto_reindex 在 ingest 里自动触发
 ```
 
 ### Extractors
@@ -614,13 +611,15 @@ def resume_import():
 ```
 ingest():
     ... (原 Phase 1 流程) ...
-    git_commit
+    rebuild touched backlinks
+    regenerate index / append log
 
-    # === (P2) ===
     if config.import.auto_reindex and not dry_run:
         touched_pages = report.pages_touched
         if touched_pages:
             reindex(brain_root, page_filter=touched_pages, dry_run=False)
+
+    git_commit
 ```
 
 `mem ingest --no-auto-reindex` 跳过这步。
@@ -645,8 +644,8 @@ Total cost so far: ~$3.21
 
 | 场景 | 行为 |
 |---|---|
-| sqlite-vec 加载失败 | warn, `mem ask` 自动降级到 `--keyword-only`，`mem reindex` 报错退出 |
-| embedding API 失败 | 单 chunk 跳过，写 `errors.log`，不阻塞 reindex |
+| sqlite-vec 加载失败 | warn, `mem ask` 自动降级到 `--mode keyword-only`，`mem reindex` 报错退出 |
+| embedding API 失败 | 单 chunk 跳过，写入 reindex report errors，不阻塞 reindex |
 | import extractor 失败 | 单文件标 failed，import 继续 |
 | dimension 不匹配 | `mem reindex` 报错要求 `--force` |
 | `mem ask` 在没 reindex 过时 | 自动降级到 keyword-only，warn "Run mem reindex for hybrid retrieval" |

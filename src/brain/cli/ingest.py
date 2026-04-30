@@ -18,6 +18,10 @@ class IngestSource(StrEnum):
 
 
 def ingest_command(
+    brain_root: Annotated[
+        Path | None,
+        typer.Option("--brain-root", help="Brain repository root."),
+    ] = None,
     dry_run: Annotated[
         bool,
         typer.Option(
@@ -41,6 +45,13 @@ def ingest_command(
             help="Maximum number of source items to ingest.",
         ),
     ] = None,
+    no_auto_reindex: Annotated[
+        bool,
+        typer.Option(
+            "--no-auto-reindex",
+            help="Skip automatic embedding reindex after a successful ingest.",
+        ),
+    ] = False,
     verbose: Annotated[
         bool | None,
         typer.Option(
@@ -52,10 +63,11 @@ def ingest_command(
     """Ingest captured source material into the current brain repository."""
     try:
         report = _run_ingest(
-            Path.cwd(),
+            Path.cwd() if brain_root is None else brain_root,
             source=source.value,
             dry_run=dry_run,
             limit=limit,
+            auto_reindex=False if no_auto_reindex else None,
         )
     except BrainError as exc:
         typer.echo(f"Error: {exc}", err=True)
@@ -69,10 +81,23 @@ def ingest_command(
         _print_verbose(report)
 
 
-def _run_ingest(brain_root: Path, *, source: str, dry_run: bool, limit: int | None) -> Any:
+def _run_ingest(
+    brain_root: Path,
+    *,
+    source: str,
+    dry_run: bool,
+    limit: int | None,
+    auto_reindex: bool | None,
+) -> Any:
     from brain.pipeline.ingest import ingest
 
-    return ingest(brain_root, source=source, dry_run=dry_run, limit=limit)
+    return ingest(
+        brain_root,
+        source=source,
+        dry_run=dry_run,
+        limit=limit,
+        auto_reindex=auto_reindex,
+    )
 
 
 def _summary(report: Any) -> str:

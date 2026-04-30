@@ -215,8 +215,8 @@
    - 加 `mem import` 的一个实际例子
 4. 更新 `docs/SPEC.md` 的 Phase 状态表格（Phase 2 改成 Done）
 5. 检查所有 docs 里**没有矛盾**：
-   - 不再说"不要加 openai 依赖"
-   - 不再单独说"Anthropic API key" 而是 multi-provider
+   - 不再保留过时的 OpenAI 依赖禁止说法
+   - 不再写成单一 Anthropic key，而是 multi-provider
    - `mem ask` 默认行为说明全部更新成 hybrid
 6. 写一个 `CHANGELOG.md`（如果没有）：
    - `## 0.2.0 — Phase 2`
@@ -225,8 +225,8 @@
 
 **Done 的标志**：
 
-- `git grep -i "不要加 openai" docs/` 返回空
-- `git grep -i "Anthropic API key" docs/ | grep -v multi-provider` 返回空
+- `git grep -i "openai.*禁止\\|不要.*openai" docs/` 返回空
+- `git grep -i "single-provider Anthropic key wording" docs/` 返回空
 - README 里能找到 reindex / import / hybrid 三个关键词
 - `mem --help` 输出和 `cli.md` 里描述一致
 

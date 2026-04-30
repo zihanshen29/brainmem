@@ -44,6 +44,7 @@ from brain.pages import (
 from brain.paths import BrainPaths
 from brain.pipeline.autolink import extract_backlinks
 from brain.pipeline.conflict import Decision, classify_fact
+from brain.pipeline.reindex import reindex
 from brain.pipeline.resolve import resolve_entity
 from brain.pipeline.signal_detect import SignalEntity, SignalExtraction, detect_signal
 from brain.pipeline.tier import TierProposal, check_tier_upgrade
@@ -150,6 +151,7 @@ def ingest(
     limit: int | None = None,
     event_id: str | None = None,
     auto_commit: bool | None = None,
+    auto_reindex: bool | None = None,
 ) -> IngestReport:
     """Run the core ingest pipeline for laundry files and/or ledger events."""
     if source not in VALID_SOURCES:
@@ -192,7 +194,14 @@ def ingest(
                     _write_ingest_error_review(review_writer, item, exc)
                     _set_cursor(conn, "events", item.event.id)
 
-        _finalize_run(conn, paths, config, report, auto_commit=auto_commit)
+        _finalize_run(
+            conn,
+            paths,
+            config,
+            report,
+            auto_commit=auto_commit,
+            auto_reindex=auto_reindex,
+        )
     finally:
         _close_ingest_connection(conn, paths.db_path)
 
@@ -308,7 +317,7 @@ def _collect_event_items(
             continue
         if event_id is None and last_processed is not None and event.id <= last_processed:
             continue
-        if event.kind is EventKind.LAUNDRY_INGESTED:
+        if event.kind in {EventKind.BULK_IMPORTED, EventKind.LAUNDRY_INGESTED}:
             continue
         text = _event_text(paths.root, event)
         items.append(
@@ -331,7 +340,7 @@ def _collect_event_items_without_cursor(
     for event in read_all(paths.events_jsonl):
         if event_id is not None and event.id != event_id:
             continue
-        if event.kind is EventKind.LAUNDRY_INGESTED:
+        if event.kind in {EventKind.BULK_IMPORTED, EventKind.LAUNDRY_INGESTED}:
             continue
         text = _event_text(paths.root, event)
         items.append(
@@ -984,6 +993,7 @@ def _finalize_run(
     report: IngestReport,
     *,
     auto_commit: bool | None = None,
+    auto_reindex: bool | None = None,
 ) -> None:
     with conn:
         _rebuild_touched_backlinks(conn, paths, report.pages_touched)
@@ -999,6 +1009,10 @@ def _finalize_run(
         ),
     )
 
+    should_reindex = config.import_.auto_reindex if auto_reindex is None else auto_reindex
+    if should_reindex and report.pages_touched:
+        _run_auto_reindex(paths, report)
+
     should_commit = config.git.auto_commit if auto_commit is None else auto_commit
     if should_commit:
         _checkpoint_db(conn)
@@ -1009,6 +1023,28 @@ def _finalize_run(
             f"ingest: process {report.processed} items",
             paths=_commit_paths(paths),
         )
+
+
+def _run_auto_reindex(paths: BrainPaths, report: IngestReport) -> None:
+    try:
+        slugs = _touched_page_slugs(paths, report.pages_touched)
+        if not slugs:
+            return
+        reindex_report = reindex(paths.root, page_filter=slugs, no_commit=True)
+    except Exception as exc:  # keep ingest success independent from embedding availability
+        report.errors.append(f"auto-reindex failed: {exc}")
+        return
+
+    for error in reindex_report.errors:
+        report.errors.append(f"auto-reindex: {error}")
+
+
+def _touched_page_slugs(paths: BrainPaths, touched_pages: list[str]) -> list[str]:
+    slugs: list[str] = []
+    for relative in touched_pages:
+        page = parse_page(paths.root / relative)
+        _append_unique(slugs, page.frontmatter.slug)
+    return slugs
 
 
 def _rebuild_touched_backlinks(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -12,12 +13,14 @@ from brain.db.entities import add_alias, upsert_entity
 from brain.exceptions import BrainError
 from brain.models import (
     Backlink,
+    EmbeddingChunk,
     Entity,
     EntityAliasSource,
     EntityType,
     Frontmatter,
     Page,
     PageType,
+    RetrievalHit,
     Tier,
 )
 from brain.pages import write_page
@@ -41,8 +44,76 @@ def test_keyword_query_finds_expected_page_in_top_three(brain_root: Path) -> Non
     result = ask(brain_root, "computer vision", top=3)
 
     assert [page.slug for page in result.results][:1] == ["cv-coursework"]
+    assert result.effective_mode == "keyword-only"
+    assert result.warnings
     assert result.results[0].page_type is PageType.PROJECT
     assert result.results[0].compiled_truth.startswith("Computer vision coursework")
+
+
+def test_keyword_only_mode_does_not_need_embeddings(brain_root: Path) -> None:
+    result = ask(brain_root, "computer vision", top=3, mode="keyword-only")
+
+    assert result.mode == "keyword-only"
+    assert result.effective_mode == "keyword-only"
+    assert result.warnings == []
+    assert result.results[0].slug == "cv-coursework"
+
+
+def test_hybrid_uses_vector_hits_when_embeddings_are_available(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from brain.db.embeddings import upsert_embedding
+    from brain.llm import embedding as embedding_module
+
+    ask_pipeline = importlib.import_module("brain.pipeline.ask")
+
+    class FakeEmbeddingClient:
+        def __init__(self, config: object) -> None:
+            self.last_call_tokens = 0
+
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            return [[0.0] * 1536 for _ in texts]
+
+    with connect(brain_root / "brain.db") as conn:
+        upsert_embedding(
+            conn,
+            EmbeddingChunk(
+                page_slug="zhang-san",
+                chunk_kind="compiled_truth",
+                chunk_id="main",
+                text="Zhang semantic text",
+                text_preview="Zhang semantic text",
+            ),
+            "hash-zhang",
+            [0.0] * 1536,
+            "text-embedding-3-small",
+        )
+        upsert_embedding(
+            conn,
+            EmbeddingChunk(
+                page_slug="cv-coursework",
+                chunk_kind="compiled_truth",
+                chunk_id="main",
+                text="Coursework semantic text",
+                text_preview="Coursework semantic text",
+            ),
+            "hash-cv",
+            [1.0] * 1536,
+            "text-embedding-3-small",
+        )
+        conn.commit()
+
+    monkeypatch.setattr(embedding_module, "OpenAICompatibleEmbeddingClient", FakeEmbeddingClient)
+    monkeypatch.setattr(ask_pipeline, "_vector_path_available", lambda conn: True)
+
+    result = ask(brain_root, "semantic-only query", top=2, debug=True)
+
+    assert result.effective_mode == "hybrid"
+    assert result.results[0].slug == "zhang-san"
+    assert result.trace is not None
+    assert result.trace.vector[0]["page_slug"] == "zhang-san"
+    assert result.trace.rrf
 
 
 def test_alias_query_uses_entity_match_and_backlink_boost(brain_root: Path) -> None:
@@ -54,6 +125,57 @@ def test_alias_query_uses_entity_match_and_backlink_boost(brain_root: Path) -> N
     assert result.trace is not None
     assert result.trace.matched_entities == ["zhang-san"]
     assert result.trace.boosted_pages == ["cv-coursework"]
+
+
+def test_semantic_mode_uses_vector_path(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ask_pipeline = importlib.import_module("brain.pipeline.ask")
+
+    monkeypatch.setattr(
+        ask_pipeline,
+        "_vector_hits",
+        lambda conn, query, top, embedding_config: [
+            RetrievalHit(
+                page_slug="cv-coursework",
+                chunk_kind="compiled_truth",
+                chunk_id="main",
+                score=0.02,
+                rank=1,
+                path="vector",
+            )
+        ],
+    )
+
+    result = ask(brain_root, "semantic query", mode="semantic", debug=True)
+
+    assert result.effective_mode == "semantic"
+    assert [page.slug for page in result.results] == ["cv-coursework"]
+    assert result.trace is not None
+    assert result.trace.vector[0]["path"] == "vector"
+
+
+def test_sql_mode_uses_entity_match(brain_root: Path) -> None:
+    result = ask(brain_root, "list Zhang San 2026", mode="sql", debug=True)
+
+    assert result.effective_mode == "sql"
+    assert [page.slug for page in result.results] == ["zhang-san"]
+    assert result.trace is not None
+    assert result.trace.sql_path
+
+
+def test_default_hybrid_structured_query_uses_sql_direct_shortcut(brain_root: Path) -> None:
+    result = ask(brain_root, "list Zhang San 2026", debug=True)
+
+    assert result.mode == "hybrid"
+    assert result.effective_mode == "sql"
+    assert result.warnings == []
+    assert [page.slug for page in result.results] == ["zhang-san"]
+    assert result.trace is not None
+    assert result.trace.classifier == "structured"
+    assert result.trace.sql_path
+    assert result.trace.vector == []
 
 
 def test_page_type_filter_and_top_limit(brain_root: Path) -> None:
@@ -172,5 +294,23 @@ def _seed_db(root: Path) -> None:
                     extracted_at=now,
                 )
             ],
+        )
+        conn.execute(
+            """
+            INSERT INTO facts (
+                subject, predicate, object, object_type, asserted_at, source_event, source_ref, confidence
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "zhang-san",
+                "reviewed",
+                "computer vision coursework",
+                "text",
+                "2026-04-28T12:00:00+00:00",
+                SECOND_ULID,
+                "pages/entities/zhang-san.md",
+                0.9,
+            ),
         )
         conn.commit()

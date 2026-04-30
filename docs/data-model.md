@@ -18,8 +18,7 @@
 │
 ├── laundry/                 # 待处理素材
 │   ├── <slug>.md            # 手动 capture 的杂乱内容
-│   ├── obsidian-import/     # (P2) bulk import 自动建子目录
-│   ├── chatgpt-history/     # (P2) bulk import 自动建子目录
+│   ├── import-<job-id>/     # (P2) bulk import 输出的 laundry 子目录
 │   └── processed/           # 处理后归档
 │
 ├── pages/                   # L1 wiki
@@ -32,14 +31,11 @@
 │   ├── experiences/
 │   └── conversations/
 │
-├── review/                  # review 队列
-│   └── archive/
-│
-└── imports/                 # (P2) bulk import 进度记录
-    └── <job-id>/
-        ├── manifest.json    # 该次 import 的所有文件清单 + 估算 + 状态
-        └── errors.log       # 失败文件的错误信息
+└── review/                  # review 队列
+    └── archive/
 ```
+
+Bulk import 进度和错误存在 `brain.db` 的 `import_jobs` / `import_files` 表里。
 
 ## 2. config.toml (Phase 2 新增 [embedding] 段)
 
@@ -199,7 +195,7 @@ CREATE TABLE import_files (
     CHECK (status IN ('pending', 'extracted', 'ingested', 'failed', 'skipped'))
 );
 
--- 全局统计 (用于 mem stats 显示)
+-- 全局统计 (用于 mem status 显示)
 CREATE TABLE stats (
     key             TEXT PRIMARY KEY,
     value           TEXT NOT NULL,
@@ -343,7 +339,7 @@ Phase 2 新增 migration `0002_phase2.sql`，由 `brain/db/migrations.py` 在打
 
 升级流程:
 1. 检测 user_version=1 → 跑 0002_phase2.sql → 设 user_version=2
-2. 用户在升级后第一次跑 `mem ask` 或 `mem stats` 时，如果 `embedding_index` 是空的，提示用户 "Run `mem reindex` to enable hybrid retrieval"
+2. 用户在升级后第一次跑 `mem ask` 或查看 `mem status` 时，如果 `embedding_index` 是空的，提示/显示当前 embedding 覆盖率，并引导用户运行 `mem reindex`
 3. **不在 migration 中自动 reindex**——这会在升级时调 embedding API 收钱，必须用户显式触发
 
 ## 11. 失败模式与回滚
@@ -351,7 +347,7 @@ Phase 2 新增 migration `0002_phase2.sql`，由 `brain/db/migrations.py` 在打
 | 场景 | 行为 |
 |---|---|
 | migration 0002 跑到一半失败 | 回滚事务, user_version 保持 1, 报错让用户重试 |
-| sqlite-vec 扩展加载失败 | `mem ask` 优雅降级到 `--keyword-only`, warn 一次 |
-| embedding API 失败 | 该 chunk 跳过, 写入 `errors.log`, 整个 reindex 不中断 |
+| sqlite-vec 扩展加载失败 | `mem ask` 优雅降级到 `--mode keyword-only`, warn 一次 |
+| embedding API 失败 | 该 chunk 跳过, 写入 reindex report errors, 整个 reindex 不中断 |
 | import 中文件失败 | 该文件标记 `failed`, 整个 import 继续 |
 | dimension 不匹配（换了 model/provider 但 vec 表仍是旧维度）| `mem reindex` 报错要求用户确认重建 vec 表并 `--force`，防止旧维度污染 |

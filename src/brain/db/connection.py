@@ -16,11 +16,21 @@ def connect(path: Path) -> sqlite3.Connection:
     Raises:
         DBError: If SQLite cannot open or configure the connection.
     """
+    conn = None
     try:
         conn = sqlite3.connect(Path(path))
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")
-    except sqlite3.Error as exc:
+        conn.enable_load_extension(True)
+        try:
+            import sqlite_vec
+
+            sqlite_vec.load(conn)
+        finally:
+            conn.enable_load_extension(False)
+    except (ImportError, sqlite3.Error) as exc:
+        if conn is not None:
+            conn.close()
         raise DBError(f"Could not connect to database: {path}") from exc
     return conn

@@ -175,6 +175,28 @@ fast_model = "deepseek-v4-flash"
 [paths]
 brain_root = {root_value}
 
+[embedding]
+provider = "openai_compatible"
+base_url = "https://api.openai.com/v1"
+model = "text-embedding-3-small"
+dimension = 1536
+api_key_env = "OPENAI_API_KEY"
+batch_size = 100
+chunk_max_chars = 1500
+unit_cost_per_1m_tokens = 0.02
+
+[retrieval]
+default_mode = "hybrid"
+rrf_k = 60
+top_per_path = 50
+final_top = 5
+sql_shortcut_enabled = true
+
+[import]
+batch_size = 50
+auto_reindex = true
+cost_confirm_threshold_usd = 1.0
+
 [ingest]
 confidence_auto_accept = 0.85
 confidence_auto_reject = 0.50

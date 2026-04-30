@@ -15,6 +15,10 @@ from brain.pipeline.capture import VALID_KINDS, capture
 
 
 def capture_command(
+    brain_root: Annotated[
+        Path | None,
+        typer.Option("--brain-root", help="Brain repository root."),
+    ] = None,
     kind: Annotated[
         str,
         typer.Argument(
@@ -49,18 +53,22 @@ def capture_command(
             raise BrainError("Choose only one capture source")
 
         if stdin:
-            report = _run_capture(Path.cwd(), typer.get_text_stream("stdin").read(), kind, "stdin")
+            report = _run_capture(_root(brain_root), typer.get_text_stream("stdin").read(), kind, "stdin")
         elif file_path is not None:
             text = _read_file(file_path)
-            report = _run_capture(Path.cwd(), text, kind, "file", str(file_path))
+            report = _run_capture(_root(brain_root), text, kind, "file", str(file_path))
         else:
             text = _read_editor()
-            report = _run_capture(Path.cwd(), text, kind, "editor")
+            report = _run_capture(_root(brain_root), text, kind, "editor")
     except BrainError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
 
     typer.echo(_summary(report))
+
+
+def _root(brain_root: Path | None) -> Path:
+    return Path.cwd() if brain_root is None else brain_root
 
 
 def _run_capture(

@@ -87,7 +87,7 @@ def test_init_db_creates_schema_and_sets_version(db_path: Path) -> None:
 
     tables = {row["name"] for row in table_rows}
 
-    assert version == 1
+    assert version == 2
     assert {
         "entities",
         "entity_aliases",
@@ -96,6 +96,10 @@ def test_init_db_creates_schema_and_sets_version(db_path: Path) -> None:
         "tier_proposals",
         "ingest_cursor",
         "lint_results",
+        "embedding_index",
+        "import_jobs",
+        "import_files",
+        "stats",
     }.issubset(tables)
 
 

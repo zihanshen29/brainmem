@@ -86,10 +86,47 @@ class GitConfig(BaseModel):
     auto_commit: bool
 
 
+class EmbeddingConfig(BaseModel):
+    """Embedding provider settings."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str = Field(default="openai_compatible", min_length=1)
+    api_key_env: str = Field(default="OPENAI_API_KEY", min_length=1)
+    model: str = Field(default="text-embedding-3-small", min_length=1)
+    base_url: str = Field(default="https://api.openai.com/v1", min_length=1)
+    dimension: int = Field(default=1536, gt=0)
+    batch_size: int = Field(default=100, gt=0)
+    chunk_max_chars: int = Field(default=1500, gt=0)
+    unit_cost_per_1m_tokens: float = Field(default=0.02, ge=0.0)
+
+
+class RetrievalConfig(BaseModel):
+    """Hybrid retrieval settings."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    default_mode: str = Field(default="hybrid", min_length=1)
+    rrf_k: int = Field(default=60, gt=0)
+    top_per_path: int = Field(default=50, gt=0)
+    final_top: int = Field(default=5, gt=0)
+    sql_shortcut_enabled: bool = True
+
+
+class ImportConfig(BaseModel):
+    """Bulk import behavior settings."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    batch_size: int = Field(default=50, gt=0)
+    auto_reindex: bool = True
+    cost_confirm_threshold_usd: float = Field(default=1.0, ge=0.0)
+
+
 class Config(BaseModel):
     """Full brain configuration loaded from config.toml."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     openai: OpenAIConfig | None = None
     anthropic: AnthropicConfig | None = None
@@ -99,6 +136,9 @@ class Config(BaseModel):
     tier: TierConfig
     lint: LintConfig
     git: GitConfig
+    embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
+    retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+    import_: ImportConfig = Field(default_factory=ImportConfig, alias="import")
 
     @model_validator(mode="after")
     def require_llm_provider(self) -> "Config":

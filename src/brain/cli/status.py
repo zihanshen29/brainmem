@@ -11,6 +11,10 @@ from brain.pipeline.status import StatusReport, collect_status
 
 
 def status_command(
+    brain_root: Annotated[
+        Path | None,
+        typer.Option("--brain-root", help="Brain repository root."),
+    ] = None,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Print status as JSON."),
@@ -18,7 +22,7 @@ def status_command(
 ) -> None:
     """Show read-only brain repository status."""
     try:
-        report = collect_status(Path.cwd())
+        report = collect_status(Path.cwd() if brain_root is None else brain_root)
     except BrainError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -43,9 +47,21 @@ def _human_summary(report: StatusReport) -> str:
             f"Pending reviews: {report.pending_reviews}",
             f"Last ingest: {report.last_ingest_at or 'never'}",
             f"Git dirty: {str(report.git_dirty).lower()}",
+            f"Embedding coverage: {_format_embedding_coverage(report.embedding_coverage)}",
+            f"Last reindex: {report.last_reindex_at or 'never'}",
+            f"Active import jobs: {report.active_import_jobs}",
+            f"Token usage: {_format_counts(report.token_usage)}",
+            f"Total cost: ${report.total_cost_usd:.6f}",
         ]
     )
 
 
 def _format_counts(counts: dict[str, int]) -> str:
     return ", ".join(f"{key}={value}" for key, value in counts.items())
+
+
+def _format_embedding_coverage(coverage: dict[str, int | float]) -> str:
+    total = int(coverage.get("total_chunks", 0))
+    indexed = int(coverage.get("indexed_chunks", 0))
+    ratio = float(coverage.get("ratio", 0.0))
+    return f"{indexed}/{total} ({ratio:.1%})"

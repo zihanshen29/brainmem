@@ -35,10 +35,16 @@ def test_status_human_output_contains_minimum_fields(
         "Pending reviews:",
         "Last ingest:",
         "Git dirty:",
+        "Embedding coverage:",
+        "Last reindex:",
+        "Active import jobs:",
+        "Token usage:",
+        "Total cost:",
     ]:
         assert field in result.stdout
     assert "Git dirty: true" in result.stdout
     assert "Last ingest: 2026-04-27T10:00:00+00:00" in result.stdout
+    assert "Last reindex: 2026-04-27T11:00:00+00:00" in result.stdout
 
 
 def test_status_json_outputs_stable_count_keys(
@@ -63,6 +69,11 @@ def test_status_json_outputs_stable_count_keys(
         "pending_reviews",
         "last_ingest_at",
         "git_dirty",
+        "embedding_coverage",
+        "last_reindex_at",
+        "active_import_jobs",
+        "token_usage",
+        "total_cost_usd",
     }
     assert payload["brain_root"] == str(brain_root.resolve())
     assert payload["pages_by_type"] == {
@@ -80,6 +91,20 @@ def test_status_json_outputs_stable_count_keys(
     assert payload["pending_reviews"] == 1
     assert payload["last_ingest_at"] == "2026-04-27T10:00:00+00:00"
     assert payload["git_dirty"] is False
+    assert payload["embedding_coverage"] == {
+        "total_chunks": 6,
+        "indexed_chunks": 2,
+        "missing_chunks": 4,
+        "ratio": 0.333333,
+    }
+    assert payload["last_reindex_at"] == "2026-04-27T11:00:00+00:00"
+    assert payload["active_import_jobs"] == 2
+    assert payload["token_usage"] == {
+        "embedding": 1234,
+        "extraction": 567,
+        "total": 1801,
+    }
+    assert payload["total_cost_usd"] == 0.42
     assert isinstance(payload["facts_active"], int)
     assert isinstance(payload["git_dirty"], bool)
 
@@ -96,6 +121,31 @@ def test_status_json_last_ingest_can_be_null(
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["last_ingest_at"] is None
+
+
+def test_status_phase2_defaults_when_tables_are_missing(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with connect(brain_root / "brain.db") as conn:
+        conn.execute("DROP TABLE IF EXISTS import_files")
+        conn.execute("DROP TABLE IF EXISTS import_jobs")
+        conn.execute("DROP TABLE IF EXISTS embedding_index")
+        conn.execute("DROP TABLE IF EXISTS stats")
+        conn.commit()
+
+    monkeypatch.setattr("brain.pipeline.status.git_ops.is_dirty", lambda _root: False)
+    monkeypatch.chdir(brain_root)
+
+    result = runner.invoke(app, ["status", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["embedding_coverage"]["indexed_chunks"] == 0
+    assert payload["last_reindex_at"] is None
+    assert payload["active_import_jobs"] == 0
+    assert payload["token_usage"] == {"embedding": 0, "extraction": 0, "total": 0}
+    assert payload["total_cost_usd"] == 0.0
 
 
 def test_status_missing_database_reports_stderr_exit_one(
@@ -188,6 +238,45 @@ def _seed_db(brain_root: Path) -> None:
             VALUES (?, ?, ?)
             """,
             ("laundry", "item.md", "2026-04-27T10:00:00+00:00"),
+        )
+        conn.execute(
+            """
+            INSERT INTO embedding_index (
+                rowid, page_slug, chunk_kind, chunk_id, content_hash, model, text_preview, created_at
+            )
+            VALUES
+                (1, 'alice', 'compiled_truth', 'main', 'hash-1', 'model-a', 'truth', ?),
+                (2, 'brain', 'compiled_truth', 'main', 'hash-2', 'model-a', 'truth', ?)
+            """,
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO import_jobs (id, source_path, started_at, status, total_files)
+            VALUES
+                ('job-running', 'notes', ?, 'running', 1),
+                ('job-paused', 'notes', ?, 'paused', 1),
+                ('job-completed', 'notes', ?, 'completed', 1)
+            """,
+            (now, now, now),
+        )
+        conn.execute(
+            """
+            UPDATE stats
+            SET value = CASE key
+                WHEN 'last_reindex_at' THEN '2026-04-27T11:00:00+00:00'
+                WHEN 'total_embedding_tokens' THEN '1234'
+                WHEN 'total_extraction_tokens' THEN '567'
+                WHEN 'total_cost_usd' THEN '0.42'
+                ELSE value
+            END
+            WHERE key IN (
+                'last_reindex_at',
+                'total_embedding_tokens',
+                'total_extraction_tokens',
+                'total_cost_usd'
+            )
+            """
         )
         conn.commit()
 

@@ -89,7 +89,7 @@ mem reindex                       # 增量, 只 embed 变化或新增的 chunk
 mem reindex --force               # 全量重 embed (用于换 model)
 mem reindex --pages <slug>        # 只重 embed 一个 page
 mem reindex --dry-run             # 显示会处理的 chunk 数 + 预估 token, 不真跑
-mem reindex --no-commit           # 跑完不自动 git commit
+mem reindex --commit              # 跑完自动 git commit；默认不 commit
 ```
 
 ### 输出示例
@@ -128,10 +128,10 @@ Run without --dry-run to execute.
 Bulk import 一个目录的素材。
 
 ```
-mem import <path> [--kind md,txt,pdf,jsonl] [--dry-run] [--then-ingest]
+mem import <path> [--kind md,txt,pdf,jsonl] [--dry-run]
                   [--yes] [--batch-size N]
 mem import --resume                       # 继续上次中断
-mem import --status [<job-id>]            # 查看 job 状态
+mem import --status [<job-id>]            # 查看 job 状态；当前实现通过可选 PATH 位置传 job id
 mem import --abort <job-id>               # 中止 job
 mem import --list-jobs                    # 列出所有 import job
 ```
@@ -141,13 +141,12 @@ mem import --list-jobs                    # 列出所有 import job
 - `<path>` — 要 import 的目录（递归扫描）
 - `--kind <list>` — 限定文件类型，逗号分隔，默认 `md,txt,pdf,jsonl`
 - `--dry-run` — 只 cost estimate
-- `--then-ingest` — import 后自动跑 ingest
 - `--yes` — 跳过 cost confirm prompt
 - `--batch-size N` — 一批后 commit 一次，默认 50
 - `--resume` — 继续 paused/running 的 job
-- `--status [job-id]` — 不带 id 显示所有未完成 job
+- `--status [job-id]` — 不带 id 显示最近一个 job；带 id 时写成 `mem import <job-id> --status`
 - `--abort <job-id>` — 把指定 job 标记 failed
-- `--list-jobs` — 列出所有 job
+- `--list-jobs` — 列出最近 job
 
 ### 输出示例
 
@@ -175,12 +174,12 @@ Importing batch 1/5...
 
 Job 01HZA... completed:
   Files processed: 232
-  Files failed:    2 (see ~/brain/imports/01HZA.../errors.log)
+  Files failed:    2 (see `mem import <job-id> --status` for file errors)
   Laundry items:   245 (some files split into multiple docs)
 
 Next steps:
-  Run `mem ingest` to process the 245 laundry items
-  Or re-run with `--then-ingest` to chain
+  Run `mem ingest` to process the 245 laundry items.
+  Ingest auto-reindex is controlled by config `[import].auto_reindex`.
 ```
 
 ### --status 输出
@@ -188,29 +187,25 @@ Next steps:
 ```
 $ mem import --status
 
-Active import jobs:
-
-01HZA... [running]   ~/Documents/vault     processed: 156/234   ~$0.21 / ~$0.35
-
-Recently finished:
-
-01HYB... [completed] ~/Downloads/papers    processed: 24/24     $0.04
-01HXC... [failed]    ~/old-notes           processed: 12/89     errors: 6
+Import job:
+job_id=01HZA... status=running progress=156/234 failed=0 estimated_usd=$0.3500 source=~/Documents/vault
+Files:
+- extracted md notes/a.md
+- pending pdf papers/b.pdf
 ```
 
 ---
 
 ## (P2) `mem cost-estimate`
 
-只算成本，不写任何东西。等价于 `mem import <path> --dry-run` 但不要求 path 一定是要 import 的——也可以预估 reindex 成本：
+只算 import 成本，不写任何东西。等价于 `mem import <path> --dry-run` 的成本估算部分。
 
 ```
-mem cost-estimate import <path>           # 预估 import
-mem cost-estimate reindex                 # 预估 reindex 当前所有 page
-mem cost-estimate reindex --force         # 预估 reindex --force
+mem cost-estimate <path>                  # 预估 import
+mem cost-estimate <path> --kind md,pdf    # 限定文件类型
 ```
 
-输出格式同 `--dry-run`。
+输出格式包含文件数、kind 分布、extraction/embedding token 估算和总美元估算。
 
 ---
 
@@ -248,7 +243,7 @@ Embedding coverage:   87% (134/154 chunks indexed)
 Last reindex:         2026-04-30 14:23:11 (UTC)
 Active import jobs:   0
 Token usage:          extraction 1.12M (~$3.21), embedding 84K (~$0.002)
-Total cost so far:    ~$3.21
+Total cost:           $3.210000
 ```
 
 ---
@@ -265,15 +260,12 @@ mem ingest [--no-auto-reindex] ...
 
 ---
 
-## 全局选项（无变化）
+## 常见选项（无变化）
 
-适用于所有命令：
+多数会读取 brain root 的命令支持：
 
 - `--brain-root <path>`
-- `--config <path>`
-- `--verbose, -v`
 - `--quiet, -q`
-- `--no-color`
 
 ## 退出码（无变化）
 
@@ -296,7 +288,7 @@ mem ingest [--no-auto-reindex] ...
 ## 帮助文本风格（示例：`mem import --help`）
 
 ```
-Usage: mem import [OPTIONS] PATH
+Usage: mem import [OPTIONS] [PATH]
 
   Bulk import files from a directory into the brain.
 
@@ -305,25 +297,24 @@ Usage: mem import [OPTIONS] PATH
   cost estimate before proceeding unless --yes is set.
 
 Arguments:
-  PATH  Directory to scan (recursive)
+  PATH  File or directory to scan, or a job id when used with --status
 
 Options:
-  --kind TEXT             Comma-separated file kinds. Default: md,txt,pdf,jsonl
+  --brain-root PATH       Brain repository root.
+  --kind TEXT             Comma-separated file kinds: md,txt,pdf,jsonl.
   --dry-run               Show estimate only, do not write
-  --then-ingest           After import, run mem ingest automatically
   --yes                   Skip cost confirmation prompt
   --batch-size INTEGER    Commit every N files. Default: 50
   --resume                Continue an unfinished import job
-  --status [JOB_ID]       Show import job status
+  --status                Show import job status; optional job id is PATH
   --abort JOB_ID          Mark a job as failed
   --list-jobs             List all import jobs
-  --verbose / --quiet
   --help                  Show this message and exit
 
 Examples:
   mem import ~/Documents/notes                    # full import
   mem import ~/notes --kind md --dry-run          # md only, estimate
-  mem import ~/notes --then-ingest                # import + ingest
   mem import --resume                             # continue unfinished
   mem import --status                             # see active jobs
+  mem import 01HZA... --status                    # see one job
 ```

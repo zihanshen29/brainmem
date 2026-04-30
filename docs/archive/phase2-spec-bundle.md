@@ -13,7 +13,7 @@
 | `data-model.md` | `docs/data-model.md` | **覆盖** (新增 embeddings / embedding_index / import_jobs 三张表 + content_hash 字段) |
 | `pipeline.md` | `docs/pipeline.md` | **覆盖** (新增 reindex / hybrid ask / bulk import 三节算法) |
 | `cli.md` | `docs/cli.md` | **覆盖** (新增 `mem import / reindex / cost-estimate` 命令 + `mem ask` 默认行为变更) |
-| `tech-stack.md` | `docs/tech-stack.md` | **覆盖** (依赖列表新增 sqlite-vec / pypdf / tiktoken；移除"不要加 openai"的过时段落) |
+| `tech-stack.md` | `docs/tech-stack.md` | **覆盖** (依赖列表新增 sqlite-vec / pypdf / tiktoken；移除过时的 OpenAI 依赖禁止段落) |
 | `phase-2-tasks.md` | `docs/phase-2-tasks.md` | **新建** (Task 17–25 的有序执行清单) |
 
 ## 给 Codex 的引导话术

@@ -18,7 +18,7 @@
 | Phase | 状态 | 范围 |
 |---|---|---|
 | Phase 1 | ✅ Done | L0 ledger, L1 wiki, SQLite backbone, manual ingest/review/lint/ask, laundry, page-type 分流, pending-fact 流程 |
-| **Phase 2** | 🟢 In progress | Hybrid retrieval (vector + keyword + SQL + RRF), bulk import, sqlite-vec embedding store, cost estimation |
+| **Phase 2** | ✅ Done | Hybrid retrieval (vector + keyword + SQL + RRF), bulk import, sqlite-vec embedding store, cost estimation |
 | Phase 3 | 📋 Planned | Procedural memory (rules pages + reflection pipeline), bi-temporal query UX, multi-brain federation |
 
 ## 阅读顺序（给 Codex）
@@ -58,7 +58,7 @@ Phase 2 的目标是让 brain **从"能用的玩具"变成"日常使用的工具
 - 各路 top-50 进 RRF 融合（k=60）后取 top-N
 - 结构化查询（"我 2025 Q2 在做什么项目"）走确定性 SQL 直查路径，不走 RRF 稀释
 - `mem ask` 的检索阶段不调 LLM；只有 `--explain` 会把检索结果交给 LLM 生成回答
-- `mem ask` 默认走 hybrid；`--keyword-only` flag 回到 Phase 1 行为
+- `mem ask` 默认走 hybrid；`--mode keyword-only` 回到 Phase 1 行为
 
 ### 4. Bulk import
 
@@ -69,7 +69,7 @@ Phase 2 的目标是让 brain **从"能用的玩具"变成"日常使用的工具
 
 ### 5. 可观测性补丁（小型）
 
-- `mem stats` 增加：embedding 覆盖率、上次 reindex 时间、累计 token 消费
+- `mem status` 增加：embedding 覆盖率、上次 reindex 时间、累计 token 消费和 import job 数
 - `mem ask --debug` 显示 RRF 三路各自的 top-N 和合并后排序
 - import 进度条 + ETA + 错误隔离（一个文件失败不阻塞其余）
 

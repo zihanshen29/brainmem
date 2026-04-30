@@ -174,7 +174,7 @@ and edit config.toml [embedding].base_url / model / api_key_env.
 
 继续用 stdlib logging + RotatingFileHandler，路径 `~/brain/brain.log`。
 
-Phase 2 给 import 单独写一个文件 `~/brain/imports/<job-id>/errors.log` 装文件级失败信息——避免污染主日志。
+Phase 2 的 import 文件级失败记录在 `import_files.error`，CLI summary 同时把本次 report errors 打到 stderr。
 
 ## 7. 测试（Phase 2 增量）
 
@@ -241,18 +241,15 @@ Phase 2 新增异常：
 # brain/exceptions.py 增量
 
 class EmbeddingError(BrainError): ...
-class ImportError(BrainError): ...     # 注意名字冲突: 用 BulkImportError
-class BulkImportError(BrainError): ...
 ```
-
-避开 `ImportError` 这个 builtin，新异常叫 `BulkImportError`。
+Bulk import 目前复用 `BrainError`，没有新增会遮蔽 builtin 的 `ImportError` 类型。
 
 ## 9. Git 操作（无变化）
 
 GitPython 继续。Phase 2 的两处变化：
 
 - `mem reindex` 默认不 commit（embedding 是派生数据，不影响 git）。`--commit` 显式开启。
-- `mem import` 按 batch commit，message: `import: batch K/N for job <id> (M files)`
+- `mem import` 写 DB、ledger 和 laundry，不自动 git commit；用户可以按需要自己提交 runtime 仓库。
 
 ## 10. 依赖锁定
 

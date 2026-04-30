@@ -13,6 +13,7 @@ class EventKind(StrEnum):
     """Kinds of append-only events in the ledger."""
 
     RAW_IMPORTED = "raw_imported"
+    BULK_IMPORTED = "bulk_imported"
     LAUNDRY_INGESTED = "laundry_ingested"
     NOTE_APPENDED = "note_appended"
     AI_CHAT = "ai_chat"
@@ -20,6 +21,7 @@ class EventKind(StrEnum):
     REVIEW_DECIDED = "review_decided"
     PAGE_EDITED = "page_edited"
     REBUILD = "rebuild"
+    REINDEXED = "reindexed"
 
 
 class Event(BaseModel):
