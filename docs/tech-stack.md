@@ -148,10 +148,14 @@ api_key_env = "OPENAI_API_KEY"
 api_key_env = "DEEPSEEK_API_KEY"
 
 [embedding]
-api_key_env = "OPENAI_API_KEY"   # 默认借用 OPENAI key
+provider = "openai_compatible"
+base_url = "https://api.openai.com/v1"
+model = "text-embedding-3-small"
+dimension = 1536
+api_key_env = "OPENAI_API_KEY"   # 默认借用 OPENAI key；国产兼容服务可改成 EMBEDDING_API_KEY
 ```
 
-**注意一个微妙点**：`[embedding]` 默认用 OpenAI 提供的 embedding API，所以 `api_key_env` 一般指向 `OPENAI_API_KEY`。但用户也可以单独配，比如用一个只有 embedding 权限的 key。
+**注意一个微妙点**：`[embedding]` 默认用 OpenAI 官方 embedding API，所以 `api_key_env` 一般指向 `OPENAI_API_KEY`。如果使用阿里百炼、硅基流动、智谱等 OpenAI-compatible embedding 服务，把 `base_url` / `model` / `api_key_env` 改成对应值即可。无论用哪家，返回向量维度必须等于 `dimension`。
 
 `mem init` 完成后提示：
 
@@ -160,6 +164,10 @@ Phase 2 requires an embedding provider. Set:
   $env:OPENAI_API_KEY = "sk-..."
 Or persist:
   setx OPENAI_API_KEY "sk-..."
+
+For an OpenAI-compatible embedding provider, set:
+  $env:EMBEDDING_API_KEY = "..."
+and edit config.toml [embedding].base_url / model / api_key_env.
 ```
 
 ## 6. 日志（无变化）
@@ -199,7 +207,7 @@ def mock_embedding(monkeypatch):
         return [_text_to_vector(t, dim=1536) for t in texts]
 
     from brain.llm import embedding
-    monkeypatch.setattr(embedding.OpenAIEmbeddingClient, "embed", fake_embed)
+    monkeypatch.setattr(embedding.OpenAICompatibleEmbeddingClient, "embed", fake_embed)
 ```
 
 ### 7c. sqlite-vec 在测试里

@@ -61,7 +61,8 @@ provider = "deepseek"               # 默认 LLM provider
 fast_model_provider = "deepseek"    # 用于轻量任务的备选
 
 [embedding]                         # === (P2) 新增 ===
-provider = "openai"                 # openai / local-bge / voyage (后两者 Phase 2 不实现)
+provider = "openai_compatible"      # openai_compatible / local-bge / voyage (后两者 Phase 2 不实现)
+base_url = "https://api.openai.com/v1"  # 可换成阿里百炼/硅基流动/智谱等兼容端点
 model = "text-embedding-3-small"
 dimension = 1536
 api_key_env = "OPENAI_API_KEY"
@@ -145,7 +146,7 @@ Page 结构、frontmatter 字段、section 顺序保持不变。Phase 2 不改 p
 -- =============================================================
 
 -- 注意: vec 虚表的 dimension 必须匹配 config.embedding.dimension
--- 换 model 必须 DROP 这张表重建
+-- 换到不同维度的 model/provider 必须 DROP 这张表和 embedding_index 后重建
 CREATE VIRTUAL TABLE embeddings USING vec0(
     embedding float[1536]
 );
@@ -343,7 +344,7 @@ Phase 2 新增 migration `0002_phase2.sql`，由 `brain/db/migrations.py` 在打
 升级流程:
 1. 检测 user_version=1 → 跑 0002_phase2.sql → 设 user_version=2
 2. 用户在升级后第一次跑 `mem ask` 或 `mem stats` 时，如果 `embedding_index` 是空的，提示用户 "Run `mem reindex` to enable hybrid retrieval"
-3. **不在 migration 中自动 reindex**——这会在升级时调 OpenAI API 收钱，必须用户显式触发
+3. **不在 migration 中自动 reindex**——这会在升级时调 embedding API 收钱，必须用户显式触发
 
 ## 11. 失败模式与回滚
 
@@ -353,4 +354,4 @@ Phase 2 新增 migration `0002_phase2.sql`，由 `brain/db/migrations.py` 在打
 | sqlite-vec 扩展加载失败 | `mem ask` 优雅降级到 `--keyword-only`, warn 一次 |
 | embedding API 失败 | 该 chunk 跳过, 写入 `errors.log`, 整个 reindex 不中断 |
 | import 中文件失败 | 该文件标记 `failed`, 整个 import 继续 |
-| dimension 不匹配（换了 model 没 reindex --force）| `mem reindex` 报错要求 `--force`, 防止旧维度污染 |
+| dimension 不匹配（换了 model/provider 但 vec 表仍是旧维度）| `mem reindex` 报错要求用户确认重建 vec 表并 `--force`，防止旧维度污染 |

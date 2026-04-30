@@ -94,7 +94,7 @@ query
 - "小张当前在哪家公司"（subject=xiao-zhang, predicate=works_at, active）
 - "我什么时候开始学 Python"（subject=i, predicate=studies, object=python）
 
-这类查询答案在 facts 表里就是确切的，向量相似度反而会引入"差不多但不对"的页面。`mem ask` 里有一个轻量的 query classifier（基于关键词 + LLM 兜底）判断是否走 SQL 短路，否则进入三路 RRF。
+这类查询答案在 facts 表里就是确切的，向量相似度反而会引入"差不多但不对"的页面。`mem ask` 里有一个轻量的 query classifier（纯规则，不调 LLM）判断是否走 SQL 短路，否则进入三路 RRF。规则识别不了的结构化查询直接走 hybrid fallback。
 
 ### `--keyword-only` 兜底
 
@@ -177,7 +177,7 @@ class EmbeddingClient(Protocol):
     @property
     def dimension(self) -> int: ...
 
-class OpenAIEmbeddingClient: ...    # Phase 2 实现
+class OpenAICompatibleEmbeddingClient: ...  # Phase 2 实现: OpenAI 官方或兼容 base_url
 class LocalBGEEmbeddingClient: ...  # 留位, Phase 2 不实现
 class VoyageEmbeddingClient: ...    # 留位, Phase 2 不实现
 ```
@@ -186,14 +186,15 @@ config.toml 里 `[embedding]` 独立段：
 
 ```toml
 [embedding]
-provider = "openai"
+provider = "openai_compatible"
+base_url = "https://api.openai.com/v1"  # 可改成阿里百炼 / 硅基流动 / 智谱等兼容端点
 model = "text-embedding-3-small"
 dimension = 1536
 api_key_env = "OPENAI_API_KEY"
 batch_size = 100        # 单次 embed 调用最多 N 条文本
 ```
 
-**注意 dimension 字段必须和 model 一致**。换 model 时改这两个一起改，并且 `mem reindex --force` 重 embed（旧维度不能和新维度共存于同一个 vec 表）。
+**注意 dimension 字段必须和 provider 返回的向量维度一致**。换 model 或换到国产兼容 provider 时，先确认维度；维度变化需要清空/重建 vec 表并 `mem reindex --force`，旧维度不能和新维度共存于同一个 vec 表。
 
 ## 设计原则（继承 Phase 1）
 

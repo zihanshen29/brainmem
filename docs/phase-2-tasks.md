@@ -13,11 +13,11 @@
 
 ## Task 17 — Embedding Config & Client
 
-**目标**：能调用 OpenAI embedding API，返回向量。
+**目标**：能调用 OpenAI 官方或 OpenAI-compatible embedding API，返回向量。
 
 1. `src/brain/llm/embedding.py`：
    - `EmbeddingClient` Protocol（`embed`, `dimension`, `last_call_tokens`）
-   - `OpenAIEmbeddingClient` 实现（用 openai SDK 的 `client.embeddings.create`）
+   - `OpenAICompatibleEmbeddingClient` 实现（用 openai SDK 的 `client.embeddings.create`，支持可配置 `base_url`）
    - 失败重试 1 次，再失败抛 `EmbeddingError`
    - batch 调用：单次最多 `batch_size` 条（按 config）
    - 用 `tiktoken` 在调用前估 token 数（用于 cost tracking）
@@ -27,6 +27,7 @@
 **测试** (`tests/unit/test_embedding.py`)：
 
 - mock OpenAI SDK 返回固定向量，断言上层接口拿到的形状正确
+- `base_url` 从 config 透传，保证国产/中转 OpenAI-compatible provider 可接入
 - 失败重试逻辑（mock 第一次失败、第二次成功）
 - batch 切分（给 250 条文本、batch_size=100，应该调 3 次 API）
 

@@ -99,7 +99,7 @@ $ mem reindex
 Scanning 35 pages...
 Chunks: 142 total, 12 new, 5 changed, 125 unchanged.
 
-Embedding 17 chunks via OpenAI text-embedding-3-small...
+Embedding 17 chunks via openai_compatible/text-embedding-3-small...
 [████████████████████] 17/17 (100%)
 
 Reindex complete:
@@ -162,7 +162,7 @@ Found 234 files:
 
 Cost estimate:
   Extraction (DeepSeek):  ~488,000 tokens   ~$0.34
-  Embedding (OpenAI):     ~234,000 tokens   ~$0.005
+  Embedding:              ~234,000 tokens   ~$0.005
   Total estimate:                            ~$0.35
 
 Continue? [y/N]: y

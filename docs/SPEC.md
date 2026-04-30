@@ -42,6 +42,7 @@ Phase 2 的目标是让 brain **从"能用的玩具"变成"日常使用的工具
 - 在现有 `brain.db` 里加 `embeddings` 虚表（vec0 类型）+ `embedding_index` 普通映射表
 - 不引入第二个数据库进程或第二套存储
 - 默认 embedding model: OpenAI `text-embedding-3-small`（1536 维, $0.02 / 1M token）
+- Embedding provider 走独立 `[embedding]` 段，默认用 OpenAI 官方 API；也支持 OpenAI-compatible `base_url`（例如阿里百炼、硅基流动、智谱等兼容服务），前提是返回维度与 `config.embedding.dimension` 一致
 - 接口设计成 provider 可插拔，将来加本地 BGE / Voyage 不用改调用方
 
 ### 2. Page indexer
@@ -55,7 +56,8 @@ Phase 2 的目标是让 brain **从"能用的玩具"变成"日常使用的工具
 
 - 三路召回：vector (sqlite-vec)、BM25 关键词、SQL 实体匹配
 - 各路 top-50 进 RRF 融合（k=60）后取 top-N
-- 结构化查询（"我 2025 Q2 在做什么项目"）走 SQL 直查路径，不走 RRF 稀释
+- 结构化查询（"我 2025 Q2 在做什么项目"）走确定性 SQL 直查路径，不走 RRF 稀释
+- `mem ask` 的检索阶段不调 LLM；只有 `--explain` 会把检索结果交给 LLM 生成回答
 - `mem ask` 默认走 hybrid；`--keyword-only` flag 回到 Phase 1 行为
 
 ### 4. Bulk import
@@ -104,7 +106,7 @@ Phase 2 的目标是让 brain **从"能用的玩具"变成"日常使用的工具
 支持三个 provider，运行时由 config 切换：
 
 - **DeepSeek (默认)**：`deepseek-v4-pro` 用于抽取/判断/重写。OpenAI-compatible API。
-- **OpenAI**：通过 Responses API。**Phase 2 也用 OpenAI 做 embedding** (`text-embedding-3-small`)。
+- **OpenAI**：通过 Responses API。
 - **Anthropic**：通过 Messages API。
 
-config.toml 的 `[anthropic]` / `[openai]` / `[deepseek]` / `[embedding]` 各自独立，可以混搭——例如 LLM 走 DeepSeek、embedding 走 OpenAI（这是默认推荐）。
+config.toml 的 `[anthropic]` / `[openai]` / `[deepseek]` / `[embedding]` 各自独立，可以混搭——例如 LLM 走 DeepSeek、embedding 走 OpenAI 官方或 OpenAI-compatible embedding 服务（这是默认推荐）。

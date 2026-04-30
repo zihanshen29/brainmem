@@ -181,7 +181,7 @@ ask(query, mode='hybrid', top=5, debug=False, type_filter=None):
 
 ### Query Classifier
 
-`classify_query(query)` 用规则 + LLM 兜底：
+`classify_query(query)` 只用规则，不调 LLM：
 
 ```python
 STRUCTURED_PATTERNS = [
@@ -194,7 +194,7 @@ STRUCTURED_PATTERNS = [
 def classify_query(query: str) -> Literal["structured", "open_ended"]:
     if any(re.search(p, query) for p in STRUCTURED_PATTERNS):
         return "structured"
-    # 否则默认 open_ended; 可选 LLM 兜底, 但 Phase 2 先不调 LLM
+    # 否则默认 open_ended。规则覆盖不到时走 hybrid fallback，不会比 Phase 1 更差。
     return "open_ended"
 ```
 
@@ -363,15 +363,19 @@ def rrf_fuse(*paths: list[RetrievalHit], k: int = 60) -> list[FusedResult]:
 ```python
 def sql_direct_query(query: str) -> list[FusedResult]:
     """对 'I 在 2025 Q2 做什么' 这种结构化查询, 不走 RRF。"""
-    # Phase 2 的实现: 让 LLM 把 query 转成 SQL 查 facts 表
-    sql = llm_client.translate_to_sql(query, schema=FACTS_SCHEMA_DESC)
-    rows = conn.execute(sql).fetchall()
+    # Phase 2 的实现: 规则解析时间范围 / 主体 / 谓词关键词,
+    # 然后拼装白名单 SQL 模板查 facts 表。绝不执行 LLM 生成的 SQL。
+    parsed = parse_structured_query(query)
+    if parsed is None:
+        return []
+    sql, params = build_fact_query(parsed)
+    rows = conn.execute(sql, params).fetchall()
 
     # 把命中的 fact 关联回它们的 source_event 和对应 page
     return assemble_fact_results(rows)
 ```
 
-**这里调一次 LLM 是必要的**——结构化查询的多样性（中英文混合、各种时间表达）规则匹配做不全。但只调一次，且只在 classifier 判定为 structured 时触发。
+SQL direct path 是安全白名单：只允许读取 `facts` / `entities` / `entity_aliases` / `backlinks` 这些固定表，所有变量都走参数绑定。规则解析失败时返回空，让 `ask()` 继续走 hybrid；不使用 LLM 生成 SQL，也不执行用户提供 SQL。
 
 ### `--debug` 输出
 
