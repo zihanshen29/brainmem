@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import re
+import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -13,12 +15,15 @@ from brain.config import load_config
 from brain.db.connection import connect
 from brain.db.embeddings import delete_embedding, find_embeddings_for_page, upsert_embedding
 from brain.db.stats import increment_stat, set_stat
+from brain.exceptions import EmbeddingError
 from brain.ledger.writer import append_event
 from brain.llm.embedding import OpenAICompatibleEmbeddingClient
 from brain.models import EmbeddingChunk, EmbeddingRecord, Event, EventKind
 from brain.pages import parse_page
 from brain.paths import BrainPaths
 from brain.pipeline.chunking import split_page_into_chunks
+
+_EMBEDDING_SCHEMA_DIMENSION_RE = re.compile(r"\bembedding\s+float\[(\d+)\]", re.IGNORECASE)
 
 
 @dataclass
@@ -113,8 +118,17 @@ def reindex(
             report.chunks_removed = len(orphans)
             return report
 
-        client = OpenAICompatibleEmbeddingClient(config.embedding)
-        _embed_pending(conn, pending, client, config.embedding.model, config.embedding.batch_size, report)
+        if pending:
+            _validate_embedding_schema_dimension(conn, config.embedding.dimension)
+            client = OpenAICompatibleEmbeddingClient(config.embedding)
+            _embed_pending(
+                conn,
+                pending,
+                client,
+                config.embedding.model,
+                config.embedding.batch_size,
+                report,
+            )
 
         with conn:
             for orphan in orphans:
@@ -172,6 +186,37 @@ def _indexed_page_slugs(conn) -> set[str]:
 def _content_hash(text: str, *, model: str, dimension: int) -> str:
     payload = f"{text}{model}{dimension}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _validate_embedding_schema_dimension(conn: sqlite3.Connection, config_dimension: int) -> None:
+    schema_dimension = _embedding_schema_dimension(conn)
+    if schema_dimension == config_dimension:
+        return
+    raise EmbeddingError(
+        "Embedding dimension mismatch: sqlite-vec embeddings table expects "
+        f"float[{schema_dimension}], but config.toml has embedding.dimension = "
+        f"{config_dimension}. Update config.toml to match the existing vector "
+        "index, or recreate the index before running mem reindex."
+    )
+
+
+def _embedding_schema_dimension(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        """
+        SELECT sql FROM sqlite_master
+        WHERE type = 'table' AND name = 'embeddings'
+        """
+    ).fetchone()
+    schema_sql = row["sql"] if row is not None else None
+    if not schema_sql:
+        raise EmbeddingError("Could not find sqlite-vec embeddings table schema")
+
+    match = _EMBEDDING_SCHEMA_DIMENSION_RE.search(schema_sql)
+    if match is None:
+        raise EmbeddingError(
+            "Could not determine sqlite-vec embedding dimension from embeddings schema"
+        )
+    return int(match.group(1))
 
 
 def _embed_pending(

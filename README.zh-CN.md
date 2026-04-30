@@ -29,6 +29,8 @@ Phase 2 增加了 hybrid retrieval、sqlite-vec embedding、Markdown/Text/PDF/JS
 
 多数 AI memory 项目优先解决应用集成：写入一条消息、搜索 memory、注入上下文。BrainMem 优先解决的是 **个人记忆所有权**：长期记忆应该可读、可改、可重建、可审计，几年后仍然能知道一条记忆从哪里来、什么时候变成事实。
 
+不同于 Mem0 式的逐消息 memory extraction，也不同于 Letta 式由 agent 自主管理上下文，BrainMem 把记忆视为一个由用户和 agent 共同维护的长期个人 wiki。
+
 关键设计：
 
 - **面向人生尺度**：可以长期记录笔记、阅读、聊天、项目历史、决策、观察、偏好和个人知识。
@@ -61,7 +63,7 @@ BrainMem 适合：
 | 批量导入 | `mem import` 支持 `.md`、`.txt`、`.pdf`、`.jsonl`，并记录可恢复 job |
 | CLI 工作流 | `init`、`capture`、`ingest`、`reindex`、`import`、`cost-estimate`、`ask`、`review`、`lint`、`rebuild`、`status`、`promote-chat`、`entity` |
 | 模型接入 | LLM 默认 DeepSeek V4；embedding 默认 OpenAI 或 OpenAI-compatible；Anthropic 仍可配置 |
-| 隐私边界 | 普通 `mem ask` 检索是本地的；`mem reindex` 调 embedding provider；`mem ingest` 和 `mem ask --explain` 可能调用外部模型 |
+| 隐私边界 | keyword-only `mem ask` 是本地的；默认 hybrid `mem ask` 会把 query 发给 embedding provider 生成向量；`mem reindex` 调 embedding provider；`mem ingest` 和 `mem ask --explain` 可能调用外部模型 |
 
 ## 快速开始
 
@@ -141,12 +143,15 @@ brain-root/            本地运行数据，不要发布到 GitHub
 本地安全命令：
 
 - `mem status`
-- 不带 `--explain` 的 `mem ask "query"`
+- `mem ask "query" --mode keyword-only`
+- `mem cost-estimate`
 - `mem rebuild --backlinks --index`
 - `mem lint --all`
 
-可能把内容发送给配置模型的命令：
+可能把内容发送给配置的 LLM 或 embedding provider 的命令：
 
+- `mem reindex`
+- 默认 hybrid 模式的 `mem ask "query"`，因为 query 会发送给 embedding provider 生成向量
 - `mem ingest`
 - `mem ask --explain`
 - `mem promote-chat`

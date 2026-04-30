@@ -29,6 +29,8 @@ Phase 2 adds hybrid retrieval, sqlite-vec embeddings, bulk import for Markdown/T
 
 Most AI memory systems optimize for application integration: add a message, search memories, inject context. BrainMem optimizes for **personal memory ownership**. It treats memory as a long-term knowledge base that should be readable, editable, rebuildable, and auditable years later.
 
+Different from Mem0-style per-message memory extraction or Letta-style agent-managed context, BrainMem treats memory as a long-form personal wiki that you co-author with agents.
+
 Key design choices:
 
 - **Life-scale scope:** meant to hold notes, reading, chats, project history, decisions, observations, preferences, and personal knowledge over years.
@@ -61,7 +63,7 @@ It is not trying to be a multi-user SaaS memory backend, a hosted chatbot platfo
 | Bulk import | `mem import` turns `.md`, `.txt`, `.pdf`, and `.jsonl` files into laundry items with resumable jobs |
 | CLI workflow | `init`, `capture`, `ingest`, `reindex`, `import`, `cost-estimate`, `ask`, `review`, `lint`, `rebuild`, `status`, `promote-chat`, `entity` |
 | LLM support | DeepSeek V4 by default for LLM work; OpenAI or OpenAI-compatible embeddings; Anthropic remains configurable |
-| Privacy boundary | Plain `mem ask` retrieval is local; `mem reindex` calls the embedding provider; `mem ingest` and `mem ask --explain` can call the configured LLM |
+| Privacy boundary | Keyword-only `mem ask` is local; default hybrid `mem ask` embeds the query through the embedding provider; `mem reindex` calls the embedding provider; `mem ingest` and `mem ask --explain` can call the configured LLM |
 
 ## Quick Start
 
@@ -141,12 +143,15 @@ Do not commit runtime memory data:
 Local-only commands:
 
 - `mem status`
-- `mem ask "query"` without `--explain`
+- `mem ask "query" --mode keyword-only`
+- `mem cost-estimate`
 - `mem rebuild --backlinks --index`
 - `mem lint --all`
 
-Commands that may send content to the configured LLM:
+Commands that may send content to the configured LLM or embedding provider:
 
+- `mem reindex`
+- `mem ask "query"` in the default hybrid mode, because the query is embedded
 - `mem ingest`
 - `mem ask --explain`
 - `mem promote-chat`

@@ -5,12 +5,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import ClassVar
 
+import pytest
 from typer.testing import CliRunner
 
 from brain.cli.main import app
 from brain.db.connection import connect
 from brain.db.embeddings import find_embeddings_for_page
 from brain.db.stats import get_stat
+from brain.exceptions import EmbeddingError
 from brain.models import Frontmatter, Page, PageType, Tier
 from brain.pages import parse_page, write_page
 from brain.pages.writer import update_compiled_truth
@@ -24,13 +26,16 @@ EVENT_THREE = "01KQA8X7QS3CRQ0H64K42Z14K2"
 
 class FakeEmbeddingClient:
     calls: ClassVar[list[list[str]]] = []
+    init_count: ClassVar[int] = 0
 
     def __init__(self, _config) -> None:
+        type(self).init_count += 1
         self.last_call_tokens = 0
 
     @classmethod
     def reset(cls) -> None:
         cls.calls = []
+        cls.init_count = 0
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         self.calls.append(list(texts))
@@ -183,6 +188,60 @@ def test_dry_run_does_not_write_or_embed(brain_root: Path, monkeypatch) -> None:
     assert FakeEmbeddingClient.calls == []
 
 
+def test_dry_run_skips_schema_dimension_validation(
+    brain_root: Path,
+    monkeypatch,
+) -> None:
+    _patch_embedding(monkeypatch)
+    _write_sample_page(brain_root, "alpha")
+    _set_embedding_dimension(brain_root, 768)
+
+    report = reindex(brain_root, dry_run=True)
+
+    assert report.dry_run is True
+    assert report.chunks_added == 2
+    assert FakeEmbeddingClient.init_count == 0
+    assert FakeEmbeddingClient.calls == []
+    assert _embedding_count(brain_root) == 0
+
+
+def test_reindex_skips_schema_dimension_validation_when_only_removing_orphans(
+    brain_root: Path,
+    monkeypatch,
+) -> None:
+    _patch_embedding(monkeypatch)
+    page_path = _write_sample_page(brain_root, "alpha", timeline_count=2)
+    reindex(brain_root)
+    page_path.unlink()
+    FakeEmbeddingClient.reset()
+    _set_embedding_dimension(brain_root, 768)
+
+    report = reindex(brain_root)
+
+    assert report.chunks_added == 0
+    assert report.chunks_updated == 0
+    assert report.chunks_removed == 3
+    assert FakeEmbeddingClient.init_count == 0
+    assert FakeEmbeddingClient.calls == []
+    assert _embedding_count(brain_root) == 0
+
+
+def test_reindex_validates_schema_dimension_before_pending_embeddings(
+    brain_root: Path,
+    monkeypatch,
+) -> None:
+    _patch_embedding(monkeypatch)
+    _write_sample_page(brain_root, "alpha")
+    _set_embedding_dimension(brain_root, 768)
+
+    with pytest.raises(EmbeddingError, match=r"float\[1536\].*embedding.dimension = 768"):
+        reindex(brain_root)
+
+    assert FakeEmbeddingClient.init_count == 0
+    assert FakeEmbeddingClient.calls == []
+    assert _embedding_count(brain_root) == 0
+
+
 def test_cli_reindex_command_is_registered(brain_root: Path, monkeypatch) -> None:
     _patch_embedding(monkeypatch)
     _write_sample_page(brain_root, "alpha")
@@ -198,6 +257,16 @@ def test_cli_reindex_command_is_registered(brain_root: Path, monkeypatch) -> Non
 def _patch_embedding(monkeypatch) -> None:
     FakeEmbeddingClient.reset()
     monkeypatch.setattr("brain.pipeline.reindex.OpenAICompatibleEmbeddingClient", FakeEmbeddingClient)
+
+
+def _set_embedding_dimension(root: Path, dimension: int) -> None:
+    config_path = root / "config.toml"
+    config_text = config_path.read_text(encoding="utf-8")
+    config_path.write_text(
+        config_text.replace("dimension = 1536", f"dimension = {dimension}"),
+        encoding="utf-8",
+        newline="\n",
+    )
 
 
 def _write_sample_page(root: Path, slug: str, timeline_count: int = 1) -> Path:

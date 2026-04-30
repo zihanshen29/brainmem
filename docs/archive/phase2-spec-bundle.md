@@ -1,5 +1,7 @@
 # Phase 2 Spec Bundle — How to Apply
 
+ARCHIVED: applied in commit `a29e57059e46ab333e51e25c0f741c6b89e16e9e` on 2026-04-30. This file is preserved for historical context; it is not a pending implementation checklist.
+
 这个目录是 **Phase 2 的 spec 增量**，不是新建一个项目。所有内容会合并进现有的 `brainmem/docs/` 目录。
 
 ## 文件说明
