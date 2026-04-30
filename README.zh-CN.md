@@ -116,16 +116,18 @@ brain-root/            本地运行数据，不要发布到 GitHub
 
 ## 验证
 
-当前 Phase 1 构建已通过：
+当前已实现的 Phase 1 构建已通过：
 
 ```powershell
 .\.venv\Scripts\pytest.exe
 .\.venv\Scripts\ruff.exe check .
 ```
 
-最近本地结果：`207 passed`，`ruff` passed。
+最近本地结果：`226 passed`，`ruff` passed。
 
 ## 规格文档
+
+`docs/` 根目录里的文件是当前 Phase 2 实施规格：
 
 - [SPEC.md](docs/SPEC.md)
 - [architecture.md](docs/architecture.md)
@@ -133,3 +135,6 @@ brain-root/            本地运行数据，不要发布到 GitHub
 - [pipeline.md](docs/pipeline.md)
 - [cli.md](docs/cli.md)
 - [tech-stack.md](docs/tech-stack.md)
+- [phase-2-tasks.md](docs/phase-2-tasks.md)
+
+已完成的 Phase 1 规格归档在 [docs/archive/phase1/](docs/archive/phase1/)。

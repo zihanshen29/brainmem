@@ -118,16 +118,18 @@ Commands that may send content to the configured LLM:
 
 ## Verification
 
-The current Phase 1 build has been checked with:
+The implemented Phase 1 build has been checked with:
 
 ```powershell
 .\.venv\Scripts\pytest.exe
 .\.venv\Scripts\ruff.exe check .
 ```
 
-Latest local result: `207 passed`, `ruff` passed.
+Latest local result: `226 passed`, `ruff` passed.
 
 ## Specs
+
+The root `docs/` files are the current Phase 2 implementation spec:
 
 - [SPEC.md](docs/SPEC.md)
 - [architecture.md](docs/architecture.md)
@@ -135,3 +137,6 @@ Latest local result: `207 passed`, `ruff` passed.
 - [pipeline.md](docs/pipeline.md)
 - [cli.md](docs/cli.md)
 - [tech-stack.md](docs/tech-stack.md)
+- [phase-2-tasks.md](docs/phase-2-tasks.md)
+
+The completed Phase 1 spec is archived at [docs/archive/phase1/](docs/archive/phase1/).

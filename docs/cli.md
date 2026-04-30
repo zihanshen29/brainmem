@@ -1,133 +1,227 @@
 # CLI Reference
 
-CLI 入口名为 `mem`。所有命令支持 `--help`。全局选项 `--brain-root` 可覆盖 `~/brain` 路径（用于测试）。
+CLI 入口名为 `mem`。所有命令支持 `--help`。全局选项 `--brain-root` 可覆盖 `~/brain` 路径。Phase 2 新增的命令和选项用 **(P2)** 标注。
 
 ## 命令总览
 
 ```
+# Phase 1
 mem init                       # 初始化空仓库
 mem ingest                     # 处理 laundry + 新事件
 mem review [<id>] [--apply]    # 处理 review 队列
 mem lint [--<kind>|--all]      # 跑 lint 检查
-mem ask <query> [--explain]    # 查询
 mem promote-chat <event-id>    # 提升 AI 对话为页面
 mem rebuild --<scope>          # 重建派生数据
 mem status                     # 仓库状态
 mem entity merge <a> <b>       # 合并实体
 mem capture [<kind>]           # 快速记录入口
+
+# Phase 2 (新增)
+mem ask <query>                # 默认变成 hybrid retrieval
+mem reindex                    # 构建/更新 embedding 索引
+mem import <path>              # bulk import
+mem cost-estimate <path>       # 估算 import 成本
 ```
 
-## 详细规范
-
-### `mem init`
+## (P2) `mem ask` (改动: 默认走 hybrid)
 
 ```
-mem init [--root <path>] [--force]
+mem ask "<query>" [--mode hybrid|keyword-only|semantic|sql] [--top N] [--type <type>]
+                  [--debug] [--explain]
 ```
 
-- `--root` —— 创建在指定路径，默认 `~/brain`
-- `--force` —— 已存在也强制初始化（会覆盖，需要 `--force` 才允许）
+### 行为变化
 
-行为见 `pipeline.md` 第 1 节。
+- **Phase 1 默认**: 关键词 + SQL + backlink 加权
+- **Phase 2 默认**: vector + keyword + SQL → RRF 融合
 
-### `mem ingest`
+### 选项
 
-```
-mem ingest [--dry-run] [--source <laundry|events|all>] [--limit N]
-```
+- `--mode hybrid` (默认) — 三路 RRF 融合
+- `--mode keyword-only` — Phase 1 行为，仅 keyword + SQL backlink
+- `--mode semantic` — 仅 vector path
+- `--mode sql` — 强制走 SQL 短路（结构化查询）
+- `--top N` — 返回前 N 条，默认 5
+- `--type <project|concept|...>` — 限定 page type
+- `--debug` — 显示三路各自 top-10 + RRF 融合详情
+- `--explain` — LLM 综合答案（保留 Phase 1 行为）
 
-- `--dry-run` —— 不实际写入，只打印将做的事
-- `--source` —— 限定处理来源，默认 `all`
-- `--limit` —— 最多处理 N 个项目（调试用）
+### 自动降级
 
-退出码：
-- 0 —— 成功
-- 1 —— 部分失败（已写 partial），错误见 `errors.log`
-- 2 —— 完全失败（全部回滚）
-
-### `mem review`
+如果 `embedding_index` 是空的（用户从未 reindex），`mem ask` 自动降级到 `--mode keyword-only` 并提示：
 
 ```
-mem review                        # 列出 pending
-mem review <review-id>            # 用 $EDITOR 打开
-mem review --apply                # 扫所有 pending 应用决定
-mem review --kind <kind>          # 只列出某类
+⚠ No embeddings found. Falling back to keyword-only mode.
+  Run `mem reindex` to enable hybrid retrieval.
 ```
 
-`<review-id>` 可以是完整 id 或唯一前缀。
+如果 sqlite-vec 扩展加载失败，同样降级。
 
-环境变量 `$EDITOR` 决定编辑器。Windows 默认 `notepad`，Linux/Mac 默认 `vi`。
-
-### `mem lint`
+### 输出示例（默认模式）
 
 ```
-mem lint --all
-mem lint --contradictions
-mem lint --stale [--days N]
-mem lint --orphans
-mem lint --citations
+Query: 我跟小张最近讨论过什么
+Mode: hybrid (3 paths fused via RRF)
+
+1. [conversation] 2026-04-29-lunch-with-xiaozhang
+   小张计划下个月跳槽到字节做推荐算法...
+   Latest: 2026-04-29: 系统设计建议...
+   RRF score: 0.058 [v1, k1, s2]
+
+2. [entity] xiaozhang
+   计划跳槽到字节, 做推荐算法...
+   Latest: 2026-04-29: 给了 system design 建议
+   RRF score: 0.043 [v3, k_, s1]
+
+...
 ```
 
-每条 lint 输出一个 review item，并在控制台打印总结。
+`[v1, k1, s2]` 表示这条结果在 vector path 里排第 1、keyword path 里排第 1、SQL path 里排第 2。`_` 表示该 path 没命中。
 
-### `mem ask`
+---
 
-```
-mem ask "<query>" [--explain] [--sql] [--type <type>] [--top N]
-```
+## (P2) `mem reindex`
 
-- `--explain` —— LLM 生成自然语言答案
-- `--sql` —— 显示生成的 SQL 查询（debug）
-- `--type` —— 限定 page type
-- `--top` —— 返回前 N 条，默认 5
-
-输出格式（默认）：
+构建/更新 embedding 索引。
 
 ```
-1. [project] cv-coursework — 计算机视觉作业
-   Compiled truth (前 200 字)...
-   最近: 2026-04-20: 决定先完成 baseline 报告...
-   Score: 4.32
-
-2. [concept] computer-vision-fundamentals — 计算机视觉基础
-   ...
+mem reindex                       # 增量, 只 embed 变化或新增的 chunk
+mem reindex --force               # 全量重 embed (用于换 model)
+mem reindex --pages <slug>        # 只重 embed 一个 page
+mem reindex --dry-run             # 显示会处理的 chunk 数 + 预估 token, 不真跑
+mem reindex --no-commit           # 跑完不自动 git commit
 ```
 
-`--explain` 模式额外输出一段 LLM 综合的回答，结尾标注引用来源。
-
-### `mem promote-chat`
+### 输出示例
 
 ```
-mem promote-chat <event-id> [--title <title>] [--slug <slug>]
+$ mem reindex
+Scanning 35 pages...
+Chunks: 142 total, 12 new, 5 changed, 125 unchanged.
+
+Embedding 17 chunks via OpenAI text-embedding-3-small...
+[████████████████████] 17/17 (100%)
+
+Reindex complete:
+  Chunks added:    12
+  Chunks updated:  5
+  Chunks removed:  3
+  Unchanged:       125
+  Tokens used:     3,421
+  Cost:            ~$0.00007
+  Duration:        4.2s
 ```
 
-- `<event-id>` —— ULID 或唯一前缀
-- `--title` —— 自定义页面 title，默认让 LLM 生成
-- `--slug` —— 自定义 slug，默认从 title 派生
-
-如果该 event 已经被 promote 过 → 报错退出。
-
-### `mem rebuild`
+### --dry-run 输出
 
 ```
-mem rebuild --db
-mem rebuild --pages <slug> [--force]
-mem rebuild --backlinks
-mem rebuild --index
+$ mem reindex --dry-run
+Would embed 17 chunks (~3,400 tokens, ~$0.00007).
+Would delete 3 orphan chunks.
+Run without --dry-run to execute.
 ```
 
-`--pages` 默认要求 `--force` 因为会覆盖。其他默认安全。
+---
 
-### `mem status`
+## (P2) `mem import`
 
-```
-mem status [--json]
-```
-
-输出（默认人读格式）：
+Bulk import 一个目录的素材。
 
 ```
-Brain root: /home/zihan/brain  (47.3 MB, 142 commits)
+mem import <path> [--kind md,txt,pdf,jsonl] [--dry-run] [--then-ingest]
+                  [--yes] [--batch-size N]
+mem import --resume                       # 继续上次中断
+mem import --status [<job-id>]            # 查看 job 状态
+mem import --abort <job-id>               # 中止 job
+mem import --list-jobs                    # 列出所有 import job
+```
+
+### 选项
+
+- `<path>` — 要 import 的目录（递归扫描）
+- `--kind <list>` — 限定文件类型，逗号分隔，默认 `md,txt,pdf,jsonl`
+- `--dry-run` — 只 cost estimate
+- `--then-ingest` — import 后自动跑 ingest
+- `--yes` — 跳过 cost confirm prompt
+- `--batch-size N` — 一批后 commit 一次，默认 50
+- `--resume` — 继续 paused/running 的 job
+- `--status [job-id]` — 不带 id 显示所有未完成 job
+- `--abort <job-id>` — 把指定 job 标记 failed
+- `--list-jobs` — 列出所有 job
+
+### 输出示例
+
+```
+$ mem import ~/Documents/obsidian-vault
+
+Discovering files...
+Found 234 files:
+  .md     198
+  .txt    12
+  .pdf    24
+
+Cost estimate:
+  Extraction (DeepSeek):  ~488,000 tokens   ~$0.34
+  Embedding (OpenAI):     ~234,000 tokens   ~$0.005
+  Total estimate:                            ~$0.35
+
+Continue? [y/N]: y
+
+Job 01HZA... started.
+
+Importing batch 1/5...
+[████████░░░░░░░░░░░] 50/234 (21%)  ETA: 2m 18s
+...
+
+Job 01HZA... completed:
+  Files processed: 232
+  Files failed:    2 (see ~/brain/imports/01HZA.../errors.log)
+  Laundry items:   245 (some files split into multiple docs)
+
+Next steps:
+  Run `mem ingest` to process the 245 laundry items
+  Or re-run with `--then-ingest` to chain
+```
+
+### --status 输出
+
+```
+$ mem import --status
+
+Active import jobs:
+
+01HZA... [running]   ~/Documents/vault     processed: 156/234   ~$0.21 / ~$0.35
+
+Recently finished:
+
+01HYB... [completed] ~/Downloads/papers    processed: 24/24     $0.04
+01HXC... [failed]    ~/old-notes           processed: 12/89     errors: 6
+```
+
+---
+
+## (P2) `mem cost-estimate`
+
+只算成本，不写任何东西。等价于 `mem import <path> --dry-run` 但不要求 path 一定是要 import 的——也可以预估 reindex 成本：
+
+```
+mem cost-estimate import <path>           # 预估 import
+mem cost-estimate reindex                 # 预估 reindex 当前所有 page
+mem cost-estimate reindex --force         # 预估 reindex --force
+```
+
+输出格式同 `--dry-run`。
+
+---
+
+## (P2) `mem status` 增强
+
+输出多了几行：
+
+```
+$ mem status
+
+Brain root: C:\Users\zihan\brain  (47.3 MB, 142 commits)
 
 Pages:
   entities      8
@@ -144,93 +238,92 @@ Entities:
   Tier 3        14
   total         28
 
-Facts:        87 active, 12 superseded
-Events:       234 in ledger
-Review queue: 3 pending
-Last ingest:  2026-04-27 22:14:33 (UTC)
+Facts:                87 active, 12 superseded
+Events:               234 in ledger
+Pending reviews:      3
+Last ingest:          2026-04-30 22:14:33 (UTC)
+
+# === (P2) ===
+Embedding coverage:   87% (134/154 chunks indexed)
+Last reindex:         2026-04-30 14:23:11 (UTC)
+Active import jobs:   0
+Token usage:          extraction 1.12M (~$3.21), embedding 84K (~$0.002)
+Total cost so far:    ~$3.21
 ```
 
-`--json` 输出机器可读 JSON。
+---
 
-### `mem entity merge`
+## (P2) `mem ingest` 微调
 
-```
-mem entity merge <slug-a> <slug-b> [--into a|b]
-```
-
-合并到第一个参数（默认）。`--into b` 反向。
-
-操作前打印将要合并的内容并要求用户确认（除非 `--yes`）。
-
-### `mem capture`
-
-快速记录入口，把内容写到 `laundry/`。
+加一个选项:
 
 ```
-mem capture                       # 打开 $EDITOR 写新条目
-mem capture --stdin               # 从 stdin 读
-mem capture --file <path>         # 从指定文件读
-mem capture chat                  # 标记为 human_chat 类型，引导填参与者
-mem capture idea                  # 标记为 idea
-mem capture meeting               # 标记为会议纪要
+mem ingest [--no-auto-reindex] ...
 ```
 
-每次 capture 在 laundry/ 写一个 `<YYYY-MM-DD-HHMMSS>_<slug>.md` 文件，frontmatter 包含 capture 时间和 kind。
+默认 `auto_reindex` 受 config 控制。flag 可以临时关掉。
 
-## 全局选项
+---
+
+## 全局选项（无变化）
 
 适用于所有命令：
 
-- `--brain-root <path>` —— 覆盖 brain 根目录
-- `--config <path>` —— 覆盖 config 文件路径
-- `--verbose, -v` —— 详细日志
-- `--quiet, -q` —— 只输出错误
-- `--no-color` —— 禁用 ANSI 颜色（Windows cmd 默认 detect）
+- `--brain-root <path>`
+- `--config <path>`
+- `--verbose, -v`
+- `--quiet, -q`
+- `--no-color`
 
-## 退出码
+## 退出码（无变化）
 
-- 0 —— 成功
-- 1 —— 业务错误（用户输入错、文件冲突、决策被拒）
-- 2 —— 系统错误（DB 损坏、API 失败、磁盘满）
-- 130 —— 用户中断 (Ctrl-C)
+- 0 — 成功
+- 1 — 业务错误
+- 2 — 系统错误
+- 130 — 用户中断 (Ctrl-C)
 
-## 命令行 UX 约定
+(P2) 新增情况：
 
-- 所有破坏性操作（rebuild、entity merge、init --force）默认要求确认，除非 `--yes`
-- 长操作显示进度条（用 `rich.progress`）
-- 错误信息分两段：第一行简短人话，后面带 traceback（仅 `--verbose`）
-- 颜色：green=成功，yellow=警告，red=错误，dim=次要信息
+- `mem import` 被 Ctrl-C 退出 130 时，job 状态置 `paused`，可 `--resume`
+- `mem ask` 降级到 keyword-only 时仍返回 0，但 stderr warn
 
-## 帮助文本风格
+## 命令行 UX 约定（无变化）
 
-每个命令的 `--help` 包含：
+- 破坏性操作要 `--yes` 跳过确认
+- import 长操作显示进度条 (`rich.progress`)
+- cost confirm 用 `[y/N]`，N 是默认
 
-1. 一行总结
-2. 一段说明（这条命令做什么、典型场景）
-3. 选项列表
-4. 1–2 个示例
-
-示例（`mem ingest --help`）：
+## 帮助文本风格（示例：`mem import --help`）
 
 ```
-Usage: mem ingest [OPTIONS]
+Usage: mem import [OPTIONS] PATH
 
-  Process new content in laundry/ and unprocessed events in events.jsonl.
+  Bulk import files from a directory into the brain.
 
-  Extracts facts via LLM, resolves entities, detects conflicts. New facts
-  with high confidence are auto-committed; mid-confidence and conflicts
-  go to the review queue. Pages are auto-created or appended to.
+  Recursively scans PATH for supported file types (markdown, text, PDF, JSONL),
+  extracts content, and writes them as laundry items for later ingest. Shows a
+  cost estimate before proceeding unless --yes is set.
+
+Arguments:
+  PATH  Directory to scan (recursive)
 
 Options:
-  --dry-run              Show what would be done without writing
-  --source [laundry|events|all]
-                         Limit to one source (default: all)
-  --limit INTEGER        Process at most N items
+  --kind TEXT             Comma-separated file kinds. Default: md,txt,pdf,jsonl
+  --dry-run               Show estimate only, do not write
+  --then-ingest           After import, run mem ingest automatically
+  --yes                   Skip cost confirmation prompt
+  --batch-size INTEGER    Commit every N files. Default: 50
+  --resume                Continue an unfinished import job
+  --status [JOB_ID]       Show import job status
+  --abort JOB_ID          Mark a job as failed
+  --list-jobs             List all import jobs
   --verbose / --quiet
-  --help                 Show this message and exit.
+  --help                  Show this message and exit
 
 Examples:
-  mem ingest                     # full ingest
-  mem ingest --dry-run           # preview
-  mem ingest --source laundry    # only process laundry/
+  mem import ~/Documents/notes                    # full import
+  mem import ~/notes --kind md --dry-run          # md only, estimate
+  mem import ~/notes --then-ingest                # import + ingest
+  mem import --resume                             # continue unfinished
+  mem import --status                             # see active jobs
 ```
