@@ -8,10 +8,10 @@
 
 ## 这不是什么
 
-- 不是常驻 agent。所有处理由用户手动触发命令完成。
+- 不是常驻智能体。所有处理由用户手动触发命令完成。
 - 不是 SaaS。完全本地运行，数据在用户家目录。
 - 不是自动决策系统。所有冲突、tier 升级、重要写入都进 review 队列等用户批准。
-- 不是 RAG 框架。Phase 1 不上向量；Phase 2 上向量但是 sqlite-vec 这种本地嵌入式方案。
+- 不是 RAG 框架。Phase 1 不使用向量检索；Phase 2 使用 sqlite-vec 这种本地嵌入式向量索引方案。
 
 ## Phase 状态
 
@@ -21,7 +21,7 @@
 | **Phase 2** | ✅ Done | Hybrid retrieval (vector + keyword + SQL + RRF), bulk import, sqlite-vec embedding store, cost estimation |
 | Phase 3 | 📋 Planned | Procedural memory (rules pages + reflection pipeline), bi-temporal query UX, multi-brain federation |
 
-## 阅读顺序（给 Codex）
+## 文档导航 / Document map
 
 1. **`docs/SPEC.md`**（本文件）—— 知道整体目标和边界
 2. **`docs/architecture.md`** —— 五层结构 + Phase 2 的 retrieval / import / embedding 三个新组件
@@ -29,13 +29,10 @@
 4. **`docs/pipeline.md`** —— ingest / review / lint / ask / reindex / import 算法
 5. **`docs/cli.md`** —— 用户接口规范（Phase 2 新增 `mem import`, `mem reindex`, `mem cost-estimate`）
 6. **`docs/tech-stack.md`** —— Python 项目结构、依赖、Windows 注意事项、测试方针
-7. **`docs/phase-2-tasks.md`** —— **按这个顺序执行 Phase 2 构建（Task 17–25）**
-
-读完之后，从 `phase-2-tasks.md` 第一个任务开始。每完成一个任务跑对应测试，通过后再进下一个。
 
 ## Phase 2 范围
 
-Phase 2 的目标是让 brain **从"能用的玩具"变成"日常使用的工具"**，关键在两件事：**装得进**（bulk import）和 **问得准**（hybrid retrieval）。具体包含：
+Phase 2 的目标是让 brain **从基础可用系统演进为日常使用工具**，关键在两件事：**装得进**（bulk import）和 **问得准**（hybrid retrieval）。具体包含：
 
 ### 1. Embedding 索引层 (sqlite-vec)
 
@@ -43,21 +40,21 @@ Phase 2 的目标是让 brain **从"能用的玩具"变成"日常使用的工具
 - 不引入第二个数据库进程或第二套存储
 - 默认 embedding model: OpenAI `text-embedding-3-small`（1536 维, $0.02 / 1M token）
 - Embedding provider 走独立 `[embedding]` 段，默认用 OpenAI 官方 API；也支持 OpenAI-compatible `base_url`（例如阿里百炼、硅基流动、智谱等兼容服务），前提是返回维度与 `config.embedding.dimension` 一致
-- 接口设计成 provider 可插拔，将来加本地 BGE / Voyage 不用改调用方
+- 接口设计成 provider 可插拔；未来增加本地 BGE / Voyage 时不需要改变调用方
 
 ### 2. Page indexer
 
 - 切片单元: `# Compiled truth` 一个 chunk + 每条 timeline entry 一个 chunk
 - 不索引 frontmatter、不索引 `# Sources`
 - chunk 上限 1500 字符，超长截断
-- 增量 reindex 靠 `content_hash` 比对（相同内容不重 embed）
+- 增量 reindex 靠 `content_hash` 比对（相同内容不重新生成 embedding）
 
 ### 3. Hybrid retrieval
 
 - 三路召回：vector (sqlite-vec)、BM25 关键词、SQL 实体匹配
 - 各路 top-50 进 RRF 融合（k=60）后取 top-N
 - 结构化查询（"我 2025 Q2 在做什么项目"）走确定性 SQL 直查路径，不走 RRF 稀释
-- `mem ask` 的检索阶段不调 LLM；只有 `--explain` 会把检索结果交给 LLM 生成回答
+- `mem ask` 的检索阶段不调用 LLM；只有 `--explain` 会把检索结果交给 LLM 生成回答
 - `mem ask` 默认走 hybrid；`--mode keyword-only` 回到 Phase 1 行为
 
 ### 4. Bulk import
@@ -67,7 +64,7 @@ Phase 2 的目标是让 brain **从"能用的玩具"变成"日常使用的工具
 - 每文件独立事务，断点续做（cursor based）
 - 速率限制 + cost estimate（dry-run 显示预估 token 数和金额）
 
-### 5. 可观测性补丁（小型）
+### 5. 可观测性支持
 
 - `mem status` 增加：embedding 覆盖率、上次 reindex 时间、累计 token 消费和 import job 数
 - `mem ask --debug` 显示 RRF 三路各自的 top-N 和合并后排序
@@ -78,19 +75,19 @@ Phase 2 的目标是让 brain **从"能用的玩具"变成"日常使用的工具
 - **Procedural memory / rules pages**：放 Phase 3，需要先用一段时间 Phase 2 才能想清楚需求形态
 - **Web UI / TUI**：CLI 是唯一接口，`rich` 美化 stdout 即可
 - **后台 scheduler**：所有命令仍由用户手动触发
-- **Graph database**：backlink + SQL 关系表已经够用
+- **Graph database**：backlink + SQL 关系表覆盖当前范围
 - **OCR**：扫描 PDF / 图片暂不支持，只处理文本 PDF
 - **HTML / EPUB / URL 直抓**：用户先用浏览器导出成 markdown 或 PDF
 - **多 brain federation**：单仓库设计
 
 ## 关键原则（Phase 1 + Phase 2 都遵守）
 
-1. **代码做数据，LLM 做判断**。能用确定性代码完成的事不调 LLM。
+1. **代码做数据，LLM 做判断**。能用确定性代码完成的事不调用 LLM。
 2. **事件账本是唯一源头真相**。markdown 页面是渲染视图，可重建。
 3. **永不静默写入**。任何 LLM 抽出的事实、tier 升级、冲突都进 review 队列。
 4. **Append-only 优先**。事件账本只追加；timeline 只追加；compiled truth 可重写但带 git 历史。
 5. **每条派生信息都有 provenance**。每个事实、每条 timeline 项指回 source event id。
-6. **(Phase 2 新增) Spec 是 source of truth**。发现实现偏离 spec 时，先更新 spec 再改实现，或反过来——但不能让 docs 和代码长期不一致。Phase 2 的 Task 24 强制做一次 docs 同步。
+6. **(Phase 2 新增) Spec 是 source of truth**。发现实现偏离 spec 时，先更新 spec 再改实现，或同步更新实现和文档，避免 docs 与代码长期不一致。Phase 2 完成时已同步文档与实现。
 
 ## 项目命名
 

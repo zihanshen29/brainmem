@@ -9,7 +9,7 @@ CLI 入口名为 `mem`。所有命令支持 `--help`。全局选项 `--brain-roo
 mem init                       # 初始化空仓库
 mem ingest                     # 处理 laundry + 新事件
 mem review [<id>] [--apply]    # 处理 review 队列
-mem lint [--<kind>|--all]      # 跑 lint 检查
+mem lint [--<kind>|--all]      # 执行 lint 检查
 mem promote-chat <event-id>    # 提升 AI 对话为页面
 mem rebuild --<scope>          # 重建派生数据
 mem status                     # 仓库状态
@@ -23,7 +23,7 @@ mem import <path>              # bulk import
 mem cost-estimate <path>       # 估算 import 成本
 ```
 
-## (P2) `mem ask` (改动: 默认走 hybrid)
+## (P2) `mem ask` (改动: 默认使用 hybrid)
 
 ```
 mem ask "<query>" [--mode hybrid|keyword-only|semantic|sql] [--top N] [--type <type>]
@@ -40,7 +40,7 @@ mem ask "<query>" [--mode hybrid|keyword-only|semantic|sql] [--top N] [--type <t
 - `--mode hybrid` (默认) — 三路 RRF 融合
 - `--mode keyword-only` — Phase 1 行为，仅 keyword + SQL backlink
 - `--mode semantic` — 仅 vector path
-- `--mode sql` — 强制走 SQL 短路（结构化查询）
+- `--mode sql` — 强制使用 SQL 短路（结构化查询）
 - `--top N` — 返回前 N 条，默认 5
 - `--type <project|concept|...>` — 限定 page type
 - `--debug` — 显示三路各自 top-10 + RRF 融合详情
@@ -48,7 +48,7 @@ mem ask "<query>" [--mode hybrid|keyword-only|semantic|sql] [--top N] [--type <t
 
 ### 自动降级
 
-如果 `embedding_index` 是空的（用户从未 reindex），`mem ask` 自动降级到 `--mode keyword-only` 并提示：
+如果 `embedding_index` 是空的（用户尚未运行 reindex），`mem ask` 自动降级到 `--mode keyword-only` 并提示：
 
 ```
 ⚠ No embeddings found. Falling back to keyword-only mode.
@@ -85,11 +85,11 @@ Mode: hybrid (3 paths fused via RRF)
 构建/更新 embedding 索引。
 
 ```
-mem reindex                       # 增量, 只 embed 变化或新增的 chunk
-mem reindex --force               # 全量重 embed (用于换 model)
-mem reindex --pages <slug>        # 只重 embed 一个 page
-mem reindex --dry-run             # 显示会处理的 chunk 数 + 预估 token, 不真跑
-mem reindex --commit              # 跑完自动 git commit；默认不 commit
+mem reindex                       # 增量, 只为变化或新增的 chunk 生成 embedding
+mem reindex --force               # 全量重新生成 embedding (用于换 model)
+mem reindex --pages <slug>        # 只重新生成一个 page 的 embedding
+mem reindex --dry-run             # 显示会处理的 chunk 数 + 预估 token, 不写入
+mem reindex --commit              # 完成后自动 git commit；默认不 commit
 ```
 
 ### 输出示例
@@ -125,13 +125,13 @@ Run without --dry-run to execute.
 
 ## (P2) `mem import`
 
-Bulk import 一个目录的素材。
+批量导入目录素材。
 
 ```
 mem import <path> [--kind md,txt,pdf,jsonl] [--dry-run]
                   [--yes] [--batch-size N]
 mem import --resume                       # 继续上次中断
-mem import --status [<job-id>]            # 查看 job 状态；当前实现通过可选 PATH 位置传 job id
+mem import --status [<job-id>]            # 查看 job 状态；可选 job id 通过 PATH 参数传入
 mem import --abort <job-id>               # 中止 job
 mem import --list-jobs                    # 列出所有 import job
 ```
@@ -140,8 +140,8 @@ mem import --list-jobs                    # 列出所有 import job
 
 - `<path>` — 要 import 的目录（递归扫描）
 - `--kind <list>` — 限定文件类型，逗号分隔，默认 `md,txt,pdf,jsonl`
-- `--dry-run` — 只 cost estimate
-- `--yes` — 跳过 cost confirm prompt
+- `--dry-run` — 只做成本估算，不写入
+- `--yes` — 跳过成本确认提示
 - `--batch-size N` — 一批后 commit 一次，默认 50
 - `--resume` — 继续 paused/running 的 job
 - `--status [job-id]` — 不带 id 显示最近一个 job；带 id 时写成 `mem import <job-id> --status`
@@ -198,7 +198,7 @@ Files:
 
 ## (P2) `mem cost-estimate`
 
-只算 import 成本，不写任何东西。等价于 `mem import <path> --dry-run` 的成本估算部分。
+只估算 import 成本，不写入任何内容。等价于 `mem import <path> --dry-run` 的成本估算部分。
 
 ```
 mem cost-estimate <path>                  # 预估 import
@@ -250,13 +250,13 @@ Total cost:           $3.210000
 
 ## (P2) `mem ingest` 微调
 
-加一个选项:
+新增选项：
 
 ```
 mem ingest [--no-auto-reindex] ...
 ```
 
-默认 `auto_reindex` 受 config 控制。flag 可以临时关掉。
+默认 `auto_reindex` 受 config 控制。该 flag 可临时关闭自动 reindex。
 
 ---
 
@@ -283,7 +283,7 @@ mem ingest [--no-auto-reindex] ...
 
 - 破坏性操作要 `--yes` 跳过确认
 - import 长操作显示进度条 (`rich.progress`)
-- cost confirm 用 `[y/N]`，N 是默认
+- 成本确认使用 `[y/N]`，N 是默认值
 
 ## 帮助文本风格（示例：`mem import --help`）
 
@@ -303,7 +303,7 @@ Options:
   --brain-root PATH       Brain repository root.
   --kind TEXT             Comma-separated file kinds: md,txt,pdf,jsonl.
   --dry-run               Show estimate only, do not write
-  --yes                   Skip cost confirmation prompt
+  --yes                   Skip cost confirmation
   --batch-size INTEGER    Commit every N files. Default: 50
   --resume                Continue an unfinished import job
   --status                Show import job status; optional job id is PATH

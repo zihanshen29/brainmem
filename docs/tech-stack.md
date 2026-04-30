@@ -6,7 +6,7 @@
 
 - **Python 3.11**
 - **Windows 10/11** 主要目标平台
-- 用户从 PowerShell / Windows Terminal 跑命令
+- 用户从 PowerShell / Windows Terminal 运行命令
 
 ## 2. 依赖（Phase 2 增量）
 
@@ -63,13 +63,13 @@ dev = [
 
 ### Phase 2 不引入
 
-明确说明 Phase 2 **仍然不要** 加这些（节制依赖）：
+Phase 2 **不包含**以下依赖：
 
 - `chromadb` / `qdrant-client` / `faiss-cpu` —— 用 sqlite-vec 替代
-- `sentence-transformers` / `torch` —— 不上本地 embedding 模型
-- `langchain` / `llama-index` —— 自己写检索逻辑，不用框架
-- `celery` / `redis` —— 没后台进程
-- `fastapi` / `streamlit` —— 没 UI
+- `sentence-transformers` / `torch` —— 不使用本地 embedding 模型
+- `langchain` / `llama-index` —— 检索逻辑由项目内部实现，不采用应用框架
+- `celery` / `redis` —— 不包含后台进程
+- `fastapi` / `streamlit` —— 不包含 UI
 
 ## 3. 项目结构（Phase 2 增量）
 
@@ -260,16 +260,7 @@ pip install -e ".[dev]"
 pip-compile pyproject.toml -o requirements.lock
 ```
 
-## 11. README 更新
-
-Phase 2 文档需要在 README 里加：
-
-1. Phase 2 features 段落（hybrid retrieval / bulk import / cost-aware）
-2. Quick start 加 `mem reindex` 步骤
-3. 多 provider 说明：DeepSeek 默认 + OpenAI 用于 embedding + 三 provider 混搭
-4. 一个 `mem import ~/Documents/notes` 的实际示例
-
-## 12. 不做的事 (Phase 2 仍然不做)
+## 11. 不做的事 (Phase 2 不采用)
 
 显式声明 Phase 2 **不**做：
 
@@ -282,16 +273,16 @@ Phase 2 文档需要在 README 里加：
 - OCR
 - HTML / EPUB / URL 直抓
 - Procedural memory / rules pages
-- LLM-driven query classifier（规则够用）
+- LLM-driven query classifier（使用规则分类）
 
-## 13. 升级路径（Phase 1 → Phase 2）
+## 12. 升级路径（Phase 1 → Phase 2）
 
-用户运行 `pip install --upgrade brain`（或 `git pull && pip install -e .`），然后第一次跑任意命令：
+用户运行 `pip install --upgrade brain`（或 `git pull && pip install -e .`），然后第一次运行任意命令：
 
-1. `migrations.py` 检测到 `user_version=1`，自动跑 `0002_phase2.sql`
+1. `migrations.py` 检测到 `user_version=1`，自动运行 `0002_phase2.sql`
 2. `user_version` 升到 2
 3. CLI 提示：`Phase 2 schema applied. Run mem reindex to enable hybrid retrieval.`
-4. 用户跑 `mem reindex`，第一次会 embed 所有 page（可能要几分钟，看页面数）
+4. 用户运行 `mem reindex`，第一次会为所有 page 生成 embedding（耗时取决于页面数量）
 5. 之后 `mem ask` 默认走 hybrid
 
 升级**不会触动**任何 markdown 文件、events.jsonl、Phase 1 的表数据。完全增量。

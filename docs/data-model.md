@@ -1,6 +1,6 @@
 # Data Model
 
-本文件定义所有数据结构。Codex 在写代码时必须严格遵循这里的字段名和类型。Phase 2 的新增内容用 **(P2)** 标注。
+本文件定义系统实现使用的数据结构、字段名和类型。Phase 2 的新增内容用 **(P2)** 标注。
 
 ## 1. 目录布局
 
@@ -123,7 +123,7 @@ EventKind = Literal[
 
 ## 4. Page Format (Phase 1, 未变)
 
-Page 结构、frontmatter 字段、section 顺序保持不变。Phase 2 不改 page format。
+Page 结构、frontmatter 字段、section 顺序保持不变。Phase 2 不改变 page format。
 
 ## 5. SQLite Schema
 
@@ -229,7 +229,7 @@ def connect(db_path: Path) -> sqlite3.Connection:
     return conn
 ```
 
-Phase 1 的 `connect()` 函数要改成上面的形态。已有调用方不需要改动。
+数据库连接实现使用上面的形态。已有调用方不需要改动。
 
 ## 6. Embedding Index Models (Phase 2 新增 Pydantic)
 
@@ -243,11 +243,11 @@ from pydantic import BaseModel, Field
 ChunkKind = Literal["compiled_truth", "timeline_entry"]
 
 class EmbeddingChunk(BaseModel):
-    """一个待 embed 的文本块。"""
+    """一个待生成 embedding 的文本块。"""
     page_slug: str
     chunk_kind: ChunkKind
     chunk_id: str               # compiled_truth: 'main'; timeline_entry: event_id
-    text: str                   # 实际要 embed 的内容
+    text: str                   # 实际用于生成 embedding 的内容
     text_preview: str           # 前 200 字
 
 class EmbeddingRecord(BaseModel):
@@ -324,7 +324,7 @@ class CostEstimate(BaseModel):
 
 ## 8. CLAUDE.md（增量）
 
-Phase 2 不改 CLAUDE.md 的核心内容（page format 没变）。但 `mem init` 和 `mem rebuild --schema` 时要确保 CLAUDE.md 仍然反映当前 schema 规范。
+Phase 2 不改变 CLAUDE.md 的核心内容（page format 保持不变）。但 `mem init` 和 `mem rebuild --schema` 时要确保 CLAUDE.md 仍然反映当前 schema 规范。
 
 ## 9. 命名规范（Phase 1 + Phase 2）
 
@@ -338,16 +338,16 @@ Phase 2 不改 CLAUDE.md 的核心内容（page format 没变）。但 `mem init
 Phase 2 新增 migration `0002_phase2.sql`，由 `brain/db/migrations.py` 在打开旧 brain 时自动检测 `PRAGMA user_version` 升级。
 
 升级流程:
-1. 检测 user_version=1 → 跑 0002_phase2.sql → 设 user_version=2
-2. 用户在升级后第一次跑 `mem ask` 或查看 `mem status` 时，如果 `embedding_index` 是空的，提示/显示当前 embedding 覆盖率，并引导用户运行 `mem reindex`
-3. **不在 migration 中自动 reindex**——这会在升级时调 embedding API 收钱，必须用户显式触发
+1. 检测 user_version=1 → 运行 0002_phase2.sql → 设 user_version=2
+2. 用户在升级后第一次运行 `mem ask` 或查看 `mem status` 时，如果 `embedding_index` 是空的，提示/显示当前 embedding 覆盖率，并引导用户运行 `mem reindex`
+3. **不在 migration 中自动 reindex**——这会在升级时调用 embedding API 并产生费用，必须由用户显式触发
 
 ## 11. 失败模式与回滚
 
 | 场景 | 行为 |
 |---|---|
-| migration 0002 跑到一半失败 | 回滚事务, user_version 保持 1, 报错让用户重试 |
-| sqlite-vec 扩展加载失败 | `mem ask` 优雅降级到 `--mode keyword-only`, warn 一次 |
+| migration 0002 执行中失败 | 回滚事务, user_version 保持 1, 返回错误并要求用户重试 |
+| sqlite-vec 扩展加载失败 | `mem ask` 优雅降级到 `--mode keyword-only`, warning 一次 |
 | embedding API 失败 | 该 chunk 跳过, 写入 reindex report errors, 整个 reindex 不中断 |
 | import 中文件失败 | 该文件标记 `failed`, 整个 import 继续 |
 | dimension 不匹配（换了 model/provider 但 vec 表仍是旧维度）| `mem reindex` 报错要求用户确认重建 vec 表并 `--force`，防止旧维度污染 |

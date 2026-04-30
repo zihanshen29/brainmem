@@ -11,7 +11,7 @@
 <p align="center">
   <img alt="Python 3.11" src="https://img.shields.io/badge/Python-3.11-3776AB">
   <img alt="CLI mem" src="https://img.shields.io/badge/CLI-mem-111827">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-335%20passed-16A34A">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-338%20passed-16A34A">
   <img alt="Local first" src="https://img.shields.io/badge/local--first-Markdown%20%2B%20SQLite-0F766E">
 </p>
 
@@ -167,11 +167,11 @@ The implemented Phase 2 build is checked with:
 .\.venv\Scripts\ruff.exe check .
 ```
 
-Latest local result: `335 passed`, `ruff` passed.
+Latest local result: `338 passed`, `ruff` passed.
 
 ## Specs
 
-The root `docs/` files are the current Phase 2 implementation spec:
+The root `docs/` files are the current product and design documentation:
 
 - [SPEC.md](docs/SPEC.md)
 - [architecture.md](docs/architecture.md)
@@ -179,6 +179,5 @@ The root `docs/` files are the current Phase 2 implementation spec:
 - [pipeline.md](docs/pipeline.md)
 - [cli.md](docs/cli.md)
 - [tech-stack.md](docs/tech-stack.md)
-- [phase-2-tasks.md](docs/phase-2-tasks.md)
 
-The completed Phase 1 spec is archived at [docs/archive/phase1/](docs/archive/phase1/).
+Phase 1 and Phase 2 historical implementation notes are archived under [docs/archive/](docs/archive/).

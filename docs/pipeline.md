@@ -14,7 +14,7 @@
 - `mem entity merge` — 合并 entity
 - `mem status` — 仓库状态
 
-完整算法见 git 历史里的 Phase 1 spec。下面只描述 **Phase 2 新增/改动** 的部分。
+Phase 1 的完整算法归档在 `docs/archive/phase1/`。下面只描述 **Phase 2 新增/改动** 的部分。
 
 ---
 
@@ -26,9 +26,9 @@
 
 ```
 mem reindex                       # 增量, 只 embed 变化或新增的 chunk
-mem reindex --force               # 全量重 embed (用于换 embedding model)
-mem reindex --pages <slug>        # 只重 embed 一个 page
-mem reindex --dry-run             # 显示会处理的 chunk 数和预估 token, 不真跑
+mem reindex --force               # 全量重新生成 embedding (用于换 embedding model)
+mem reindex --pages <slug>        # 只重新生成一个 page 的 embedding
+mem reindex --dry-run             # 显示会处理的 chunk 数和预估 token, 不写入
 ```
 
 ### 增量算法
@@ -141,11 +141,11 @@ def split_page_into_chunks(page: Page, max_chars: int) -> list[EmbeddingChunk]:
     return chunks
 ```
 
-**为什么标题要拼进 chunk text**：embed compiled_truth 时如果只 embed 正文，搜"我的计算机视觉作业"找不到——因为正文里可能没出现"作业"两个字。把 page title 拼进去解决这种 hint loss。
+**为什么标题要包含在 chunk text 中**：对 compiled_truth 生成 embedding 时，如果只使用正文，查询"我的计算机视觉作业"可能无法命中，因为正文里未必出现"作业"这个词。把 page title 加入 chunk text 可以减少这种 hint loss。
 
 ### 自动增量触发
 
-`mem ingest` 完成后如果 `config.import.auto_reindex == True`（默认开），自动调一次 `reindex(page_filter=touched_slugs)`。这让用户感觉"ingest 之后立刻能 hybrid 查到新页面"。
+`mem ingest` 完成后如果 `config.import.auto_reindex == True`（默认开），自动调用一次 `reindex(page_filter=touched_slugs)`。这样 ingest 之后新增页面可以立即被 hybrid retrieval 命中。
 
 `mem ingest --no-auto-reindex` 可以跳过。
 
@@ -175,30 +175,30 @@ ask(query, mode='hybrid', top=5, debug=False, type_filter=None):
        if type_filter:
            fused = [r for r in fused if page_type(r.page_slug) == type_filter]
 
-    6. 取 top-N, 拉每页的预览
+    6. 取 top-N, 读取每页的预览
        return [page_summary(r) for r in fused[:top]]
 ```
 
 ### Query Classifier
 
-`classify_query(query)` 只用规则，不调 LLM：
+`classify_query(query)` 使用规则分类，不调用 LLM：
 
 ```python
 STRUCTURED_PATTERNS = [
     r"我.{0,5}(\d{4}年|\d月|Q[1-4]|周|天|月)",   # 时间限定
     r"(谁|什么人).{0,5}(在|是)",                  # 主语查询
-    r"(什么时候|何时)",                           # 时间问 ate
+    r"(什么时候|何时)",                           # 时间查询
     r"^(列出|列举|有哪些)",                      # 枚举
 ]
 
 def classify_query(query: str) -> Literal["structured", "open_ended"]:
     if any(re.search(p, query) for p in STRUCTURED_PATTERNS):
         return "structured"
-    # 否则默认 open_ended。规则覆盖不到时走 hybrid fallback，不会比 Phase 1 更差。
+    # 否则默认 open_ended。规则覆盖不到时走 hybrid fallback。
     return "open_ended"
 ```
 
-**Phase 2 故意不在 classifier 里调 LLM**：每次 ask 都先调一次 LLM 判断会让 ask 变慢且烧钱。先用规则路径，等真实查询暴露规则覆盖不到的 case 再加 LLM。
+**Phase 2 classifier 不调用 LLM**：每次 ask 前调用 LLM 会增加延迟和运行成本。当前采用规则路径，后续根据真实查询覆盖情况再评估是否引入 LLM 分类。
 
 ### Vector Search
 
@@ -235,7 +235,7 @@ def vector_search(conn, query: str, top: int = 50) -> list[RetrievalHit]:
 
 ```python
 def bm25_search(conn, query: str, top: int = 50) -> list[RetrievalHit]:
-    """简单 BM25, 在 page 内容文本上跑。"""
+    """BM25 scorer over page content text."""
     keywords = tokenize(query)  # 中文用 jieba, 英文 split
 
     # 加载所有 page 的 chunk text + preview (从 embedding_index 拿)
@@ -267,7 +267,7 @@ def bm25_search(conn, query: str, top: int = 50) -> list[RetrievalHit]:
     ]
 ```
 
-注意 BM25 跑在 page 内容上，不是 embedding_index 的 text_preview——preview 太短不够准。
+注意 BM25 使用 page 内容评分，而不是 embedding_index 的 text_preview；preview 太短，会降低召回质量。
 
 ### SQL Entity Match
 
@@ -436,7 +436,7 @@ import(path, kinds=None, dry_run=False):
         print estimate; return
 
     4. if estimate.total_usd >= threshold:
-        prompt user "估计 $X.XX, 继续? [y/N]"
+        request confirmation "估计 $X.XX, 继续? [y/N]"
         if not confirmed: abort
 
     5. job = create_import_job(...)

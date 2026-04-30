@@ -1,12 +1,12 @@
-# Phase 2 Spec Bundle — How to Apply
+# Phase 2 Spec Bundle — Application Record
 
 ARCHIVED: applied in commit `a29e57059e46ab333e51e25c0f741c6b89e16e9e` on 2026-04-30. This file is preserved for historical context; it is not a pending implementation checklist.
 
-这个目录是 **Phase 2 的 spec 增量**，不是新建一个项目。所有内容会合并进现有的 `brainmem/docs/` 目录。
+这个记录描述 Phase 2 spec 增量在 `brainmem/docs/` 中的应用方式。
 
 ## 文件说明
 
-每个文件对应 brainmem 仓库里的一个 doc。**操作方式都是"覆盖原文件"或"追加段落"**，不要新建独立的 phase-2 子目录——单一 doc 源是 Phase 2 一开始就定的原则，避免 Phase 1 / Phase 2 之间再出现 drift。
+每个文件对应 brainmem 仓库里的一个 doc。应用时采用"覆盖原文件"或"追加段落"方式，保持单一 doc 源。
 
 | 本目录文件 | 对应仓库路径 | 操作 |
 |---|---|---|
@@ -16,20 +16,16 @@ ARCHIVED: applied in commit `a29e57059e46ab333e51e25c0f741c6b89e16e9e` on 2026-0
 | `pipeline.md` | `docs/pipeline.md` | **覆盖** (新增 reindex / hybrid ask / bulk import 三节算法) |
 | `cli.md` | `docs/cli.md` | **覆盖** (新增 `mem import / reindex / cost-estimate` 命令 + `mem ask` 默认行为变更) |
 | `tech-stack.md` | `docs/tech-stack.md` | **覆盖** (依赖列表新增 sqlite-vec / pypdf / tiktoken；移除过时的 OpenAI 依赖禁止段落) |
-| `phase-2-tasks.md` | `docs/phase-2-tasks.md` | **新建** (Task 17–25 的有序执行清单) |
+| `phase-2-tasks.md` | `docs/archive/phase2/phase-2-tasks.md` | **归档** (Phase 2 历史执行清单) |
 
-## 给 Codex 的引导话术
+## 历史应用流程
 
-把 spec 应用到仓库前，先让 Codex 这样开工:
+Phase 2 spec 应用和代码实现分为两个步骤：
 
-> 我要在现有 brainmem 仓库里实施 Phase 2。先做以下事情，然后停下来等我确认：
-> 1. 用 `phase-2-spec/` 目录里的 6 个文件覆盖 `docs/` 下的同名文件
-> 2. 把 `phase-2-spec/phase-2-tasks.md` 复制到 `docs/phase-2-tasks.md`
-> 3. 跑 `pytest && ruff check .` 确认覆盖文档不影响 Phase 1 测试
-> 4. 提交一个 docs-only commit: `docs: import phase 2 spec`
-> 5. 然后等我说"开始 Task 17"再动代码
-
-这样 spec 应用和代码实现是两个分离的步骤，万一文档需要再改还有缓冲。
+1. 用 `phase-2-spec/` 目录里的 6 个文件覆盖 `docs/` 下的同名文件。
+2. 将 Phase 2 执行清单作为历史实施说明归档。
+3. 运行 `pytest && ruff check .` 确认文档覆盖不影响 Phase 1 测试。
+4. 提交 docs-only commit: `docs: import phase 2 spec`。
 
 ## Phase 2 范围一句话
 

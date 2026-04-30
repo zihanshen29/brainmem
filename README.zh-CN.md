@@ -11,7 +11,7 @@
 <p align="center">
   <img alt="Python 3.11" src="https://img.shields.io/badge/Python-3.11-3776AB">
   <img alt="CLI mem" src="https://img.shields.io/badge/CLI-mem-111827">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-335%20passed-16A34A">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-338%20passed-16A34A">
   <img alt="Local first" src="https://img.shields.io/badge/local--first-Markdown%20%2B%20SQLite-0F766E">
 </p>
 
@@ -29,7 +29,7 @@ Phase 2 增加了 hybrid retrieval、sqlite-vec embedding、Markdown/Text/PDF/JS
 
 多数 AI memory 项目优先解决应用集成：写入一条消息、搜索 memory、注入上下文。BrainMem 优先解决的是 **个人记忆所有权**：长期记忆应该可读、可改、可重建、可审计，几年后仍然能知道一条记忆从哪里来、什么时候变成事实。
 
-不同于 Mem0 式的逐消息 memory extraction，也不同于 Letta 式由 agent 自主管理上下文，BrainMem 把记忆视为一个由用户和 agent 共同维护的长期个人 wiki。
+不同于 Mem0 式的逐消息 memory extraction，也不同于 Letta 式由智能体自主管理上下文，BrainMem 把记忆视为一个由用户和智能体共同维护的长期个人 wiki。
 
 关键设计：
 
@@ -38,7 +38,7 @@ Phase 2 增加了 hybrid retrieval、sqlite-vec embedding、Markdown/Text/PDF/JS
 - **人参与记忆写入**：冲突、低置信事实、新实体、tier 变化可以进入 review 队列，不静默污染长期记忆。
 - **默认保留 provenance**：页面有 timeline 和 sources，派生索引可以从源文件重建。
 - **不是纯向量召回**：`mem ask` 组合 vector、BM25 keyword、SQL/entity match，再用 RRF 融合。
-- **智能体可用，但记忆不归智能体所有**：agent 可以读写流程，但长期事实由用户可审计地控制。
+- **智能体可用，但记忆不归智能体所有**：智能体可以读写流程，但长期事实由用户可审计地控制。
 
 ## 适用范围
 
@@ -50,7 +50,7 @@ BrainMem 适合：
 - 为研究、写作、工程实践、个人运营保留可追溯记忆链；
 - 偏好文件和 SQLite，而不是黑盒托管 memory 平台的用户。
 
-它不试图成为多用户 SaaS memory backend、托管聊天机器人平台、图数据库服务，或完全自治的 self-editing agent runtime。
+它不试图成为多用户 SaaS memory backend、托管聊天机器人平台、图数据库服务，或完全自治的自编辑智能体运行时。
 
 ## 核心能力
 
@@ -63,7 +63,7 @@ BrainMem 适合：
 | 批量导入 | `mem import` 支持 `.md`、`.txt`、`.pdf`、`.jsonl`，并记录可恢复 job |
 | CLI 工作流 | `init`、`capture`、`ingest`、`reindex`、`import`、`cost-estimate`、`ask`、`review`、`lint`、`rebuild`、`status`、`promote-chat`、`entity` |
 | 模型接入 | LLM 默认 DeepSeek V4；embedding 默认 OpenAI 或 OpenAI-compatible；Anthropic 仍可配置 |
-| 隐私边界 | keyword-only `mem ask` 是本地的；默认 hybrid `mem ask` 会把 query 发给 embedding provider 生成向量；`mem reindex` 调 embedding provider；`mem ingest` 和 `mem ask --explain` 可能调用外部模型 |
+| 隐私边界 | keyword-only `mem ask` 是本地的；默认 hybrid `mem ask` 会把 query 发给 embedding provider 生成向量；`mem reindex` 调用 embedding provider；`mem ingest` 和 `mem ask --explain` 可能调用外部模型 |
 
 ## 快速开始
 
@@ -167,11 +167,11 @@ brain-root/            本地运行数据，不要发布到 GitHub
 .\.venv\Scripts\ruff.exe check .
 ```
 
-最近本地结果：`335 passed`，`ruff` passed。
+最近本地结果：`338 passed`，`ruff` passed。
 
 ## 规格文档
 
-`docs/` 根目录里的文件是当前 Phase 2 实施规格：
+`docs/` 根目录里的文件是当前产品与设计文档：
 
 - [SPEC.md](docs/SPEC.md)
 - [architecture.md](docs/architecture.md)
@@ -179,6 +179,5 @@ brain-root/            本地运行数据，不要发布到 GitHub
 - [pipeline.md](docs/pipeline.md)
 - [cli.md](docs/cli.md)
 - [tech-stack.md](docs/tech-stack.md)
-- [phase-2-tasks.md](docs/phase-2-tasks.md)
 
-已完成的 Phase 1 规格归档在 [docs/archive/phase1/](docs/archive/phase1/)。
+Phase 1 和 Phase 2 的历史实施说明归档在 [docs/archive/](docs/archive/)。
