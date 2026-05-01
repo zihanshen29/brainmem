@@ -1,5 +1,6 @@
 import sqlite3
 from pathlib import Path
+from urllib.parse import urlencode
 
 from brain.exceptions import DBError
 
@@ -34,3 +35,11 @@ def connect(path: Path) -> sqlite3.Connection:
             conn.close()
         raise DBError(f"Could not connect to database: {path}") from exc
     return conn
+
+
+def sqlite_uri(path: Path, **params: str | int) -> str:
+    """Build a SQLite file URI that is valid for absolute Windows paths."""
+    uri = Path(path).expanduser().resolve().as_uri()
+    if not params:
+        return uri
+    return f"{uri}?{urlencode(params)}"

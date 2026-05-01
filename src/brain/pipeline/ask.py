@@ -11,6 +11,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from brain.config import EmbeddingConfig, load_config
+from brain.db.connection import sqlite_uri
 from brain.exceptions import BrainError
 from brain.models import EmbeddingChunk, FusedResult, Page, PageType, RetrievalHit
 from brain.pages import parse_page
@@ -797,7 +798,7 @@ def _trace_sql(trace: AskModeTrace | None, sql: str, params: tuple[Any, ...]) ->
 
 
 def _connect_readonly(path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+    conn = sqlite3.connect(sqlite_uri(path, mode="ro"), uri=True)
     conn.row_factory = sqlite3.Row
     return conn
 

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import frontmatter
 
+from brain.db.connection import sqlite_uri
 import brain.git_ops as git_ops
 from brain.config import load_config
 from brain.exceptions import BrainError
@@ -109,7 +110,7 @@ def _validate_brain_root(paths: BrainPaths) -> None:
 
 def _connect_readonly(path: Path) -> sqlite3.Connection:
     try:
-        conn = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+        conn = sqlite3.connect(sqlite_uri(path, mode="ro"), uri=True)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
     except sqlite3.Error as exc:

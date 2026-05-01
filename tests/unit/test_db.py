@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from brain.db.backlinks import get_backlinks_to, replace_backlinks_for_page
-from brain.db.connection import connect
+from brain.db.connection import connect, sqlite_uri
 from brain.db.entities import (
     add_alias,
     get_entity,
@@ -113,6 +113,19 @@ def test_connect_enables_foreign_keys_and_wal(db_path: Path) -> None:
 
     assert foreign_keys == 1
     assert journal_mode == "wal"
+
+
+def test_sqlite_uri_opens_absolute_paths_from_other_cwd(
+    db_path: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    with sqlite3.connect(sqlite_uri(db_path, mode="ro"), uri=True) as connection:
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+
+    assert version == 2
 
 
 def test_entity_upsert_and_lookup_round_trip(conn: sqlite3.Connection) -> None:

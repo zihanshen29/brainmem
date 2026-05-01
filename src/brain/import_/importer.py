@@ -17,7 +17,7 @@ import ulid
 from pydantic import BaseModel, ConfigDict, Field
 
 from brain.config import load_config
-from brain.db.connection import connect
+from brain.db.connection import connect, sqlite_uri
 from brain.exceptions import BrainError
 from brain.import_.cost import cost_estimate
 from brain.ledger import append_event
@@ -777,7 +777,7 @@ def _write_lf(path: Path, text: str) -> None:
 
 
 def _readonly_connection(path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(f"file:{path.as_posix()}?mode=ro&immutable=1", uri=True)
+    conn = sqlite3.connect(sqlite_uri(path, mode="ro", immutable=1), uri=True)
     conn.row_factory = sqlite3.Row
     return conn
 

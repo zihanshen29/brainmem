@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from brain.config import Config, load_config
 from brain.db.backlinks import replace_backlinks_for_page
-from brain.db.connection import connect
+from brain.db.connection import connect, sqlite_uri
 from brain.db.entities import get_entity
 from brain.db.facts import add_fact, find_active_facts, supersede
 from brain.db.tier import propose_tier
@@ -1101,7 +1101,7 @@ def _connect_for_ingest(path: Path, *, dry_run: bool) -> sqlite3.Connection:
     if not dry_run:
         return connect(path)
 
-    conn = sqlite3.connect(f"file:{path.as_posix()}?mode=ro&immutable=1", uri=True)
+    conn = sqlite3.connect(sqlite_uri(path, mode="ro", immutable=1), uri=True)
     conn.row_factory = sqlite3.Row
     return conn
 

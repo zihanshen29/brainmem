@@ -7,7 +7,7 @@ from typing import Annotated, Any
 
 import typer
 
-from brain.db.connection import connect
+from brain.db.connection import connect, sqlite_uri
 from brain.exceptions import BrainError
 from brain.paths import BrainPaths
 
@@ -251,7 +251,7 @@ def _format_job(job: Any) -> str:
 def _readonly_jobs_connection(brain_root: Path) -> sqlite3.Connection:
     paths = BrainPaths(Path(brain_root).expanduser().resolve())
     try:
-        conn = sqlite3.connect(f"file:{paths.db_path.as_posix()}?mode=ro", uri=True)
+        conn = sqlite3.connect(sqlite_uri(paths.db_path, mode="ro", immutable=1), uri=True)
         conn.row_factory = sqlite3.Row
     except sqlite3.Error as exc:
         raise BrainError(f"Could not open import jobs database: {paths.db_path}") from exc
