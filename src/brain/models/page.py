@@ -16,6 +16,7 @@ class PageType(StrEnum):
     EVENT = "event"
     EXPERIENCE = "experience"
     CONVERSATION = "conversation"
+    PROCEDURE = "procedure"
 
 
 class Tier(IntEnum):
@@ -24,6 +25,14 @@ class Tier(IntEnum):
     TIER_1 = 1
     TIER_2 = 2
     TIER_3 = 3
+
+
+class ProcedureStatus(StrEnum):
+    """Lifecycle status for procedure pages."""
+
+    RAW = "raw"
+    TESTED = "tested"
+    STABLE = "stable"
 
 
 class Frontmatter(BaseModel):
@@ -40,6 +49,10 @@ class Frontmatter(BaseModel):
     tags: list[str] = Field(default_factory=list)
     aliases: list[str] = Field(default_factory=list)
     external_ids: dict[str, str] = Field(default_factory=dict)
+    status: ProcedureStatus | None = None
+    success_count: int | None = None
+    fail_count: int | None = None
+    last_run: datetime | None = None
 
     @field_validator("slug")
     @classmethod
@@ -50,10 +63,32 @@ class Frontmatter(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def validate_entity_tier(self) -> "Frontmatter":
-        """Entity pages must declare a tier."""
+    def validate_page_type_fields(self) -> "Frontmatter":
+        """Validate page-type-specific frontmatter fields."""
         if self.type is PageType.ENTITY and self.tier is None:
             raise ValueError("entity pages must include tier")
+        procedure_fields = {
+            "status": self.status,
+            "success_count": self.success_count,
+            "fail_count": self.fail_count,
+            "last_run": self.last_run,
+        }
+        if self.type is PageType.PROCEDURE:
+            missing = [
+                name
+                for name in ("status", "success_count", "fail_count")
+                if procedure_fields[name] is None
+            ]
+            if missing:
+                raise ValueError(
+                    "procedure pages must include status, success_count, and fail_count"
+                )
+            for name in ("success_count", "fail_count"):
+                count = procedure_fields[name]
+                if count is not None and count < 0:
+                    raise ValueError(f"{name} must be non-negative")
+        elif any(value is not None for value in procedure_fields.values()):
+            raise ValueError("procedure-only fields are only allowed on procedure pages")
         return self
 
 

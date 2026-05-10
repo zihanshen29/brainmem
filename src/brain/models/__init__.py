@@ -11,7 +11,7 @@ from brain.models.import_job import (
     ImportJob,
     ImportJobStatus,
 )
-from brain.models.page import Frontmatter, Page, PageType, Tier
+from brain.models.page import Frontmatter, Page, PageType, ProcedureStatus, Tier
 
 __all__ = [
     "Backlink",
@@ -36,6 +36,7 @@ __all__ = [
     "ImportJobStatus",
     "Page",
     "PageType",
+    "ProcedureStatus",
     "RetrievalHit",
     "Tier",
 ]

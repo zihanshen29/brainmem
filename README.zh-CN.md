@@ -56,12 +56,12 @@ BrainMem 适合：
 
 | 模块 | 能力 |
 | --- | --- |
-| 知识库 | 带 frontmatter、compiled truth、timeline、sources 的 Markdown 页面 |
+| 知识库 | 带 frontmatter、compiled truth、timeline、sources 的 Markdown 页面，也支持记录可复用步骤的 procedure 页面 |
 | 运行状态 | SQLite 管理实体、事实、反链、review、lint、tier proposal |
 | 事件账本 | JSONL append-only event ledger，支持 cursor ingest |
 | Hybrid retrieval | `mem ask` 默认用 vector + keyword + SQL 召回并 RRF 融合，保留 keyword-only fallback |
 | 批量导入 | `mem import` 支持 `.md`、`.txt`、`.pdf`、`.jsonl`，并记录可恢复 job |
-| CLI 工作流 | `init`、`capture`、`ingest`、`reindex`、`import`、`cost-estimate`、`ask`、`review`、`lint`、`rebuild`、`status`、`promote-chat`、`entity` |
+| CLI 工作流 | `init`、`capture`、`ingest`、`reindex`、`import`、`cost-estimate`、`ask`、`procedure`、`review`、`lint`、`rebuild`、`status`、`promote-chat`、`entity` |
 | 模型接入 | LLM 默认 DeepSeek V4；embedding 默认 OpenAI 或 OpenAI-compatible；Anthropic 仍可配置 |
 | 隐私边界 | keyword-only `mem ask` 是本地的；默认 hybrid `mem ask` 会把 query 发给 embedding provider 生成向量；`mem reindex` 调用 embedding provider；`mem ingest` 和 `mem ask --explain` 可能调用外部模型 |
 

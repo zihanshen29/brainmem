@@ -109,6 +109,7 @@ def test_brain_paths_expand_from_root(tmp_path: Path) -> None:
     assert paths.events_dir == root / "pages" / "events"
     assert paths.experiences_dir == root / "pages" / "experiences"
     assert paths.conversations_dir == root / "pages" / "conversations"
+    assert paths.procedures_dir == root / "pages" / "procedures"
     assert paths.review_dir == root / "review"
     assert paths.review_archive_dir == root / "review" / "archive"
 

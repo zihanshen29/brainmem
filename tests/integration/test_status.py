@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 
 from brain.cli.main import app
 from brain.db.connection import connect
-from brain.models import Frontmatter, Page, PageType, Tier
+from brain.models import Frontmatter, Page, PageType, ProcedureStatus, Tier
 from brain.pages import write_page
 
 runner = CliRunner()
@@ -76,7 +76,7 @@ def test_status_json_outputs_stable_count_keys(
         "total_cost_usd",
     }
     assert payload["brain_root"] == str(brain_root.resolve())
-    assert payload["pages_by_type"] == {
+    expected_pages_by_type = {
         "entity": 1,
         "project": 1,
         "concept": 1,
@@ -84,6 +84,9 @@ def test_status_json_outputs_stable_count_keys(
         "experience": 0,
         "conversation": 0,
     }
+    if hasattr(PageType, "PROCEDURE"):
+        expected_pages_by_type["procedure"] = 1
+    assert payload["pages_by_type"] == expected_pages_by_type
     assert payload["entities_by_tier"] == {"1": 1, "2": 1, "3": 0}
     assert payload["facts_active"] == 1
     assert payload["facts_superseded"] == 1
@@ -92,10 +95,10 @@ def test_status_json_outputs_stable_count_keys(
     assert payload["last_ingest_at"] == "2026-04-27T10:00:00+00:00"
     assert payload["git_dirty"] is False
     assert payload["embedding_coverage"] == {
-        "total_chunks": 6,
+        "total_chunks": 8 if hasattr(PageType, "PROCEDURE") else 6,
         "indexed_chunks": 2,
-        "missing_chunks": 4,
-        "ratio": 0.333333,
+        "missing_chunks": 6 if hasattr(PageType, "PROCEDURE") else 4,
+        "ratio": 0.25 if hasattr(PageType, "PROCEDURE") else 0.333333,
     }
     assert payload["last_reindex_at"] == "2026-04-27T11:00:00+00:00"
     assert payload["active_import_jobs"] == 2
@@ -192,6 +195,8 @@ def _seed_status_fixture(brain_root: Path) -> None:
     _write_page(brain_root, "entities/alice.md", PageType.ENTITY, tier=Tier.TIER_1)
     _write_page(brain_root, "projects/brain.md", PageType.PROJECT)
     _write_page(brain_root, "concepts/memory.md", PageType.CONCEPT)
+    if procedure_type := getattr(PageType, "PROCEDURE", None):
+        _write_page(brain_root, "procedures/triage.md", procedure_type)
     (brain_root / "events.jsonl").write_text("{}\n{}\n", encoding="utf-8", newline="\n")
     (brain_root / "review" / "pending.md").write_text(
         "---\nreview_id: pending\nkind: low_confidence_fact\nstatus: pending\n---\n",
@@ -289,18 +294,27 @@ def _write_page(
     tier: Tier | None = None,
 ) -> None:
     slug = Path(relative).stem
+    frontmatter_kwargs = {
+        "type": page_type,
+        "slug": slug,
+        "title": slug.title(),
+        "tier": tier,
+        "created": _utc(),
+        "updated": _utc(),
+        "tags": [],
+        "aliases": [],
+        "external_ids": {},
+    }
+    if page_type is getattr(PageType, "PROCEDURE", None):
+        frontmatter_kwargs.update(
+            {
+                "status": ProcedureStatus.RAW,
+                "success_count": 0,
+                "fail_count": 0,
+            }
+        )
     page = Page(
-        frontmatter=Frontmatter(
-            type=page_type,
-            slug=slug,
-            title=slug.title(),
-            tier=tier,
-            created=_utc(),
-            updated=_utc(),
-            tags=[],
-            aliases=[],
-            external_ids={},
-        ),
+        frontmatter=Frontmatter(**frontmatter_kwargs),
         compiled_truth="truth",
         timeline=["- 2026-04-27 [event:01KQA8R9KVCG906A0203VYEQF7]: Created page"],
         sources=[],

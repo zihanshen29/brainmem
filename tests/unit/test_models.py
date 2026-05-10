@@ -17,6 +17,7 @@ from brain.models import (
     Frontmatter,
     Page,
     PageType,
+    ProcedureStatus,
     Tier,
 )
 
@@ -67,6 +68,22 @@ def test_page_round_trip() -> None:
     )
 
     assert_round_trip(page)
+
+
+def test_procedure_frontmatter_round_trip() -> None:
+    frontmatter = Frontmatter(
+        type=PageType.PROCEDURE,
+        slug="run-smoke-tests",
+        title="Run smoke tests",
+        created=utc_datetime(),
+        updated=utc_datetime(),
+        status=ProcedureStatus.TESTED,
+        success_count=2,
+        fail_count=1,
+        last_run=utc_datetime(),
+    )
+
+    assert_round_trip(frontmatter)
 
 
 def test_fact_round_trip() -> None:
@@ -289,6 +306,76 @@ def test_entity_page_frontmatter_requires_tier() -> None:
             created=utc_datetime(),
             updated=utc_datetime(),
         )
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    ["status", "success_count", "fail_count"],
+)
+def test_procedure_frontmatter_requires_procedure_fields(missing_field: str) -> None:
+    data = {
+        "type": PageType.PROCEDURE,
+        "slug": "run-smoke-tests",
+        "title": "Run smoke tests",
+        "created": utc_datetime(),
+        "updated": utc_datetime(),
+        "status": ProcedureStatus.RAW,
+        "success_count": 0,
+        "fail_count": 0,
+    }
+    data.pop(missing_field)
+
+    with pytest.raises(ValidationError):
+        Frontmatter.model_validate(data)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("success_count", -1),
+        ("fail_count", -1),
+    ],
+)
+def test_procedure_frontmatter_rejects_negative_counts(field: str, value: int) -> None:
+    data = {
+        "type": PageType.PROCEDURE,
+        "slug": "run-smoke-tests",
+        "title": "Run smoke tests",
+        "created": utc_datetime(),
+        "updated": utc_datetime(),
+        "status": ProcedureStatus.RAW,
+        "success_count": 0,
+        "fail_count": 0,
+    }
+    data[field] = value
+
+    with pytest.raises(ValidationError):
+        Frontmatter.model_validate(data)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("status", ProcedureStatus.RAW),
+        ("success_count", 1),
+        ("fail_count", 1),
+        ("last_run", utc_datetime()),
+    ],
+)
+def test_non_procedure_frontmatter_rejects_procedure_only_fields(
+    field: str, value: object
+) -> None:
+    data = {
+        "type": PageType.PROJECT,
+        "slug": "brain",
+        "title": "Brain",
+        "created": utc_datetime(),
+        "updated": utc_datetime(),
+        field: value,
+    }
+
+    with pytest.raises(ValidationError):
+        Frontmatter.model_validate(data)
 
 
 def test_models_forbid_extra_fields() -> None:

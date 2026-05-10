@@ -56,12 +56,12 @@ It is not trying to be a multi-user SaaS memory backend, a hosted chatbot platfo
 
 | Area | What BrainMem provides |
 | --- | --- |
-| Knowledge base | Markdown pages with frontmatter, compiled truth, timeline, and sources |
+| Knowledge base | Markdown pages with frontmatter, compiled truth, timeline, and sources, including procedure pages for reusable operating steps |
 | Runtime state | SQLite schema for entities, facts, backlinks, reviews, lint results, and tier proposals |
 | Event ledger | Append-only JSONL event log with cursor-based ingest |
 | Hybrid retrieval | `mem ask` uses vector + keyword + SQL matching with RRF, with keyword-only fallback |
 | Bulk import | `mem import` turns `.md`, `.txt`, `.pdf`, and `.jsonl` files into laundry items with resumable jobs |
-| CLI workflow | `init`, `capture`, `ingest`, `reindex`, `import`, `cost-estimate`, `ask`, `review`, `lint`, `rebuild`, `status`, `promote-chat`, `entity` |
+| CLI workflow | `init`, `capture`, `ingest`, `reindex`, `import`, `cost-estimate`, `ask`, `procedure`, `review`, `lint`, `rebuild`, `status`, `promote-chat`, `entity` |
 | LLM support | DeepSeek V4 by default for LLM work; OpenAI or OpenAI-compatible embeddings; Anthropic remains configurable |
 | Privacy boundary | Keyword-only `mem ask` is local; default hybrid `mem ask` embeds the query through the embedding provider; `mem reindex` calls the embedding provider; `mem ingest` and `mem ask --explain` can call the configured LLM |
 

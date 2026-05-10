@@ -12,6 +12,13 @@ from brain.pipeline.lint import (
     lint_stale,
     run_lint,
 )
+from brain.pipeline.procedure import (
+    ProcedureReport,
+    ProcedureRunResult,
+    create_procedure,
+    promote_procedure,
+    run_procedure,
+)
 from brain.pipeline.promote_chat import PromoteChatReport, promote_chat
 from brain.pipeline.rebuild import (
     RebuildReport,
@@ -37,6 +44,18 @@ from brain.pipeline.review import (
 from brain.pipeline.signal_detect import SignalEntity, SignalExtraction, detect_signal
 from brain.pipeline.tier import TierProposal, check_tier_upgrade
 
+
+def append_working(*args, **kwargs):
+    from brain.pipeline.scratch import append_working as _append_working
+
+    return _append_working(*args, **kwargs)
+
+
+def rebuild_snapshot(*args, **kwargs):
+    from brain.pipeline.scratch import rebuild_snapshot as _rebuild_snapshot
+
+    return _rebuild_snapshot(*args, **kwargs)
+
 __all__ = [
     "AskModeTrace",
     "AskPageSummary",
@@ -46,6 +65,8 @@ __all__ = [
     "LintIssue",
     "LintKind",
     "LintRunReport",
+    "ProcedureReport",
+    "ProcedureRunResult",
     "PromoteChatReport",
     "RebuildReport",
     "ReviewAction",
@@ -57,11 +78,13 @@ __all__ = [
     "SignalEntity",
     "SignalExtraction",
     "TierProposal",
+    "append_working",
     "apply_decision",
     "apply_pending",
     "ask",
     "check_tier_upgrade",
     "classify_fact",
+    "create_procedure",
     "detect_signal",
     "extract_backlinks",
     "ingest",
@@ -72,11 +95,14 @@ __all__ = [
     "list_pending",
     "parse_review_file",
     "promote_chat",
+    "promote_procedure",
     "rebuild_backlinks",
     "rebuild_db",
     "rebuild_index",
     "rebuild_pages",
+    "rebuild_snapshot",
     "resolve_entity",
     "resolve_review_path",
     "run_lint",
+    "run_procedure",
 ]

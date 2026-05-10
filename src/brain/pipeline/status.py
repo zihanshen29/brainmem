@@ -6,9 +6,9 @@ from pathlib import Path
 
 import frontmatter
 
-from brain.db.connection import sqlite_uri
 import brain.git_ops as git_ops
 from brain.config import load_config
+from brain.db.connection import sqlite_uri
 from brain.exceptions import BrainError
 from brain.models import PageType
 from brain.pages import parse_page

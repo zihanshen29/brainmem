@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from brain.exceptions import PageParseError
-from brain.models import Frontmatter, Page, PageType, Tier
+from brain.models import Frontmatter, Page, PageType, ProcedureStatus, Tier
 from brain.pages import (
     TimelineEntry,
     append_log,
@@ -43,6 +43,26 @@ def sample_page() -> Page:
     )
 
 
+def sample_procedure_page() -> Page:
+    return Page(
+        frontmatter=Frontmatter(
+            type=PageType.PROCEDURE,
+            slug="run-smoke-tests",
+            title="Run smoke tests",
+            created=utc_datetime(),
+            updated=utc_datetime(),
+            tags=["procedure"],
+            status=ProcedureStatus.STABLE,
+            success_count=3,
+            fail_count=0,
+            last_run=utc_datetime(),
+        ),
+        compiled_truth="Run the focused smoke test suite.",
+        timeline=[f"- 2026-04-28 [event:{VALID_ULID}]: Procedure created"],
+        sources=["README.md"],
+    )
+
+
 def write_sample_markdown(path: Path, *, include_sources: bool = True) -> None:
     sources = "\n---\n# Sources\n\n- events.jsonl" if include_sources else ""
     path.write_text(
@@ -77,6 +97,42 @@ def write_sample_markdown(path: Path, *, include_sources: bool = True) -> None:
     )
 
 
+def write_procedure_markdown(path: Path) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                "---",
+                "type: procedure",
+                "slug: run-smoke-tests",
+                "title: Run smoke tests",
+                "created: '2026-04-28T12:00:00Z'",
+                "updated: '2026-04-28T12:00:00Z'",
+                "tags: [procedure]",
+                "status: stable",
+                "success_count: 3",
+                "fail_count: 0",
+                "last_run: '2026-04-28T12:00:00Z'",
+                "---",
+                "",
+                "# Compiled truth",
+                "",
+                "Run the focused smoke test suite.",
+                "---",
+                "# Timeline",
+                "",
+                f"- 2026-04-28 [event:{VALID_ULID}]: Procedure created",
+                "---",
+                "# Sources",
+                "",
+                "- README.md",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def test_parse_write_parse_round_trip(tmp_path: Path) -> None:
     path = tmp_path / "page.md"
     page = sample_page()
@@ -86,6 +142,37 @@ def test_parse_write_parse_round_trip(tmp_path: Path) -> None:
     write_page(path, parsed)
 
     assert parse_page(path) == page
+
+
+def test_procedure_page_parse_write_parse_round_trip(tmp_path: Path) -> None:
+    path = tmp_path / "procedure.md"
+    page = sample_procedure_page()
+
+    write_page(path, page)
+    parsed = parse_page(path)
+    write_page(path, parsed)
+
+    assert parse_page(path) == page
+
+
+def test_append_timeline_preserves_procedure_frontmatter(tmp_path: Path) -> None:
+    path = tmp_path / "procedure.md"
+    write_procedure_markdown(path)
+    before = path.read_text(encoding="utf-8")
+
+    append_timeline(
+        path,
+        TimelineEntry(
+            date="2026-04-29",
+            event_id=SECOND_ULID,
+            description="Ran successfully",
+        ),
+    )
+
+    after = path.read_text(encoding="utf-8")
+    assert parse_page(path).frontmatter.status is ProcedureStatus.STABLE
+    assert f"- 2026-04-29 [event:{SECOND_ULID}]: Ran successfully" in after
+    assert before.split("# Compiled truth")[0] == after.split("# Compiled truth")[0]
 
 
 def test_append_timeline_preserves_other_sections(tmp_path: Path) -> None:

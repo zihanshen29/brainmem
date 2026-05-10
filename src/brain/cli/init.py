@@ -30,7 +30,7 @@ Every page has frontmatter, then four sections separated by `---`:
 
 ## Frontmatter
 Required: type, slug, title, created, updated.
-type in {entity, project, concept, event, experience, conversation}.
+type in {entity, project, concept, event, experience, conversation, procedure}.
 
 ## Cross-references
 Use `[[slug]]` to link to another page. Use `[[slug|display]]` for custom display text.
@@ -136,6 +136,7 @@ def _create_directories(paths: BrainPaths) -> None:
         paths.events_dir,
         paths.experiences_dir,
         paths.conversations_dir,
+        paths.procedures_dir,
         paths.review_archive_dir,
     ]
     try:

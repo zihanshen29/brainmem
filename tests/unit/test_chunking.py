@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 import pytest
 
 from brain.exceptions import BrainError
-from brain.models import Frontmatter, Page, PageType, Tier
+from brain.models import Frontmatter, Page, PageType, ProcedureStatus, Tier
 from brain.pipeline.chunking import split_page_into_chunks
 
 VALID_ULID = "01KQA8R9KVCG906A0203VYEQF7"
@@ -74,6 +74,38 @@ def test_timeline_entries_generate_timeline_chunks_with_event_ids() -> None:
     assert [chunk.chunk_id for chunk in chunks] == [VALID_ULID, SECOND_ULID]
     assert chunks[0].text == "2026-04-29 - Zhang San: Created entity page"
     assert chunks[1].text == "2026-04-30 - Zhang San: Added follow-up"
+
+
+def test_procedure_page_generates_compiled_truth_and_timeline_chunks() -> None:
+    procedure_type = getattr(PageType, "PROCEDURE", None)
+    if procedure_type is None:
+        pytest.skip("PageType.PROCEDURE is owned by the model worker")
+    page = Page(
+        frontmatter=Frontmatter(
+            type=procedure_type,
+            slug="release-checklist",
+            title="Release Checklist",
+            created=utc_datetime(),
+            updated=utc_datetime(),
+            tags=[],
+            aliases=[],
+            external_ids={},
+            status=ProcedureStatus.RAW,
+            success_count=0,
+            fail_count=0,
+        ),
+        compiled_truth="Run the release checklist before shipping.",
+        timeline=[f"- 2026-04-30 [event:{VALID_ULID}]: Added procedure steps"],
+        sources=[],
+    )
+
+    chunks = split_page_into_chunks(page, max_chars=100)
+
+    assert [chunk.chunk_kind for chunk in chunks] == ["compiled_truth", "timeline_entry"]
+    assert chunks[0].page_slug == "release-checklist"
+    assert chunks[0].text == "Release Checklist\n\nRun the release checklist before shipping."
+    assert chunks[1].chunk_id == VALID_ULID
+    assert chunks[1].text == "2026-04-30 - Release Checklist: Added procedure steps"
 
 
 def test_long_text_is_truncated_and_preview_is_limited_to_200_chars() -> None:

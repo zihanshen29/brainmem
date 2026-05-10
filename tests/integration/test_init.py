@@ -29,6 +29,7 @@ def test_init_creates_files_dirs_db_and_initial_commit(tmp_path: Path) -> None:
         root / "pages" / "events",
         root / "pages" / "experiences",
         root / "pages" / "conversations",
+        root / "pages" / "procedures",
         root / "review" / "archive",
     ]
     expected_files = [
@@ -62,6 +63,7 @@ def test_init_creates_files_dirs_db_and_initial_commit(tmp_path: Path) -> None:
     assert "batch_size = 50" in config_text
     assert "auto_reindex = true" in config_text
     assert "cost_confirm_threshold_usd = 1.0" in config_text
+    assert "procedure" in (root / "CLAUDE.md").read_text(encoding="utf-8")
     config = load_config(root / "config.toml")
     assert config.paths.brain_root == root.resolve()
     assert config.openai is None

@@ -18,6 +18,7 @@ mem capture [<kind>]           # 快速记录入口
 
 # Phase 2 (新增)
 mem ask <query>                # 默认变成 hybrid retrieval
+mem procedure <slug>           # 手动维护 procedure 页面
 mem reindex                    # 构建/更新 embedding 索引
 mem import <path>              # bulk import
 mem cost-estimate <path>       # 估算 import 成本
@@ -42,9 +43,24 @@ mem ask "<query>" [--mode hybrid|keyword-only|semantic|sql] [--top N] [--type <t
 - `--mode semantic` — 仅 vector path
 - `--mode sql` — 强制使用 SQL 短路（结构化查询）
 - `--top N` — 返回前 N 条，默认 5
-- `--type <project|concept|...>` — 限定 page type
+- `--type <project|concept|procedure|...>` — 限定 page type
 - `--debug` — 显示三路各自 top-10 + RRF 融合详情
 - `--explain` — LLM 综合答案（保留 Phase 1 行为）
+
+---
+
+## `mem procedure`
+
+手动维护可复用流程页面。本轮不从 provider-backed ingest 自动识别 procedure；需要通过 CLI 显式创建、记录运行或提升状态。
+
+```
+mem procedure new <slug> --title "<title>"
+mem procedure run <slug> --result success|fail --note "<note>"
+mem procedure promote <slug> --status raw|tested|stable
+mem ask "<query>" --type procedure
+```
+
+Procedure 页面会进入普通 page 路径：`mem status` 的 `pages_by_type` 会统计 `procedure`，`mem ask --type procedure` 可过滤检索，`mem reindex --dry-run` 会按 compiled truth 和 timeline 估算 chunks。
 
 ### 自动降级
 

@@ -67,6 +67,21 @@ class BrainPaths:
         return self.laundry_dir / "processed"
 
     @property
+    def scratch_dir(self) -> Path:
+        """Directory for local scratch and snapshot files."""
+        return self.root / "scratch"
+
+    @property
+    def working_buffer(self) -> Path:
+        """Path to the append-only working scratch buffer."""
+        return self.scratch_dir / "working.md"
+
+    @property
+    def snapshot_path(self) -> Path:
+        """Path to the deterministic scratch snapshot."""
+        return self.scratch_dir / "SNAPSHOT.md"
+
+    @property
     def pages_dir(self) -> Path:
         """Directory containing markdown wiki pages."""
         return self.root / "pages"
@@ -110,6 +125,11 @@ class BrainPaths:
     def conversations_dir(self) -> Path:
         """Directory for conversation pages."""
         return self.pages_dir / "conversations"
+
+    @property
+    def procedures_dir(self) -> Path:
+        """Directory for procedure pages."""
+        return self.pages_dir / "procedures"
 
     @property
     def review_dir(self) -> Path:

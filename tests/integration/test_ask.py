@@ -10,7 +10,7 @@ from brain.cli.init import init_brain
 from brain.cli.main import app
 from brain.exceptions import LLMError
 from brain.llm import client as llm_client
-from brain.models import Frontmatter, Page, PageType, Tier
+from brain.models import Frontmatter, Page, PageType, ProcedureStatus, Tier
 from brain.pages import write_page
 
 runner = CliRunner()
@@ -47,6 +47,22 @@ def test_cli_ask_type_filters_results(brain_root: Path, monkeypatch: pytest.Monk
 
     assert result.exit_code == 0
     assert "[project] brain-ask - Brain Ask CLI" in result.stdout
+    assert "[entity] alice - Alice" not in result.stdout
+
+
+def test_cli_ask_type_filters_procedure_pages(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if not hasattr(PageType, "PROCEDURE"):
+        pytest.skip("PageType.PROCEDURE is owned by the model worker")
+    monkeypatch.chdir(brain_root)
+
+    result = runner.invoke(app, ["ask", "release checklist", "--type", "procedure"])
+
+    assert result.exit_code == 0
+    assert "[procedure] release-checklist - Release Checklist" in result.stdout
+    assert "[project] brain-ask - Brain Ask CLI" not in result.stdout
     assert "[entity] alice - Alice" not in result.stdout
 
 
@@ -221,6 +237,32 @@ def _write_ask_pages(root: Path) -> None:
             sources=["docs/cli.md"],
         ),
     )
+    procedure_type = getattr(PageType, "PROCEDURE", None)
+    if procedure_type is not None:
+        _write_page(
+            root,
+            dirname="procedures",
+            page=Page(
+                frontmatter=Frontmatter(
+                    type=procedure_type,
+                    slug="release-checklist",
+                    title="Release Checklist",
+                    created=now,
+                    updated=now,
+                    tags=[],
+                    aliases=[],
+                    external_ids={},
+                    status=ProcedureStatus.RAW,
+                    success_count=0,
+                    fail_count=0,
+                ),
+                compiled_truth="Use the release checklist procedure before shipping BrainMem.",
+                timeline=[
+                    "- 2026-04-28 [event:01KQA8X7QS3CRQ0H64K42Z14K2]: Added release checklist procedure."
+                ],
+                sources=["docs/cli.md"],
+            ),
+        )
 
 
 def _write_page(root: Path, *, dirname: str, page: Page) -> None:
