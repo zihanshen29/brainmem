@@ -1,7 +1,7 @@
 # BrainMem
 
 <p align="center">
-  <strong>面向人和智能体的本地优先生命记忆系统。</strong>
+  <strong>面向人和智能体的本地优先长期记忆系统。</strong>
 </p>
 
 <p align="center">
@@ -9,65 +9,49 @@
 </p>
 
 <p align="center">
-  <img alt="Python 3.11" src="https://img.shields.io/badge/Python-3.11-3776AB">
+  <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-3776AB">
   <img alt="CLI mem" src="https://img.shields.io/badge/CLI-mem-111827">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-338%20passed-16A34A">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-415%20passed-16A34A">
   <img alt="Local first" src="https://img.shields.io/badge/local--first-Markdown%20%2B%20SQLite-0F766E">
 </p>
 
 ## 这是什么
 
-BrainMem 是一个本地优先的个人长期记忆系统，用来记录一个人的生活、工作、学习、项目、关系、决策和对话。它既服务于希望拥有私有记忆库的人，也服务于需要可靠个人上下文的编程智能体。
+BrainMem 是一个本地优先的个人长期记忆系统，用来把生活、工作、学习、项目、关系、决策和对话沉淀成可读、可审计、可重建的知识库。它适合希望掌握自己记忆数据的人，也适合需要稳定个人上下文的编码智能体。
 
-它的核心思想是 **memory compiler**：把原始笔记、导入文件、聊天记录和事件日志，编译成 Obsidian 友好的 Markdown wiki 与 SQLite 索引。系统保留来源、时间线、review 队列和结构化事实，而不是把记忆静默写进一个看不见的向量库。
+核心思路是 **memory compiler**：把原始笔记、导入文件、聊天记录和事件日志编译成 Obsidian 友好的 Markdown wiki 与 SQLite 索引。系统保留来源、时间线、review 队列和结构化事实，而不是把记忆静默写进一个看不见的向量库。
 
-默认是 local-first：你的真实知识库目录保留在本机。只有在执行抽取、改写、解释等需要模型的命令时，才会调用外部 LLM。
+BrainMem 默认本地优先：真实数据根目录留在你的机器上。只有执行抽取、改写、embedding 或解释等需要模型的命令时，才会调用外部 provider。
 
-Phase 2 增加了 hybrid retrieval、sqlite-vec embedding、Markdown/Text/PDF/JSONL 批量导入、import 进度追踪、成本估算和状态观测。
+Phase 2 增加了 hybrid retrieval、sqlite-vec embedding、Markdown/Text/PDF/JSONL 批量导入、导入进度、成本估算、状态观测，以及面向 agent runtime 的 token-bounded 注入、scratch、snapshot 和 procedure 工作流。
 
-## 独特之处
+## 设计取舍
 
-多数 AI memory 项目优先解决应用集成：写入一条消息、搜索 memory、注入上下文。BrainMem 优先解决的是 **个人记忆所有权**：长期记忆应该可读、可改、可重建、可审计，几年后仍然能知道一条记忆从哪里来、什么时候变成事实。
-
-不同于 Mem0 式的逐消息 memory extraction，也不同于 Letta 式由智能体自主管理上下文，BrainMem 把记忆视为一个由用户和智能体共同维护的长期个人 wiki。
-
-关键设计：
-
-- **面向人生尺度**：可以长期记录笔记、阅读、聊天、项目历史、决策、观察、偏好和个人知识。
-- **本地 source of truth**：Markdown 页面、SQLite、append-only JSONL 都留在你的目录里。
-- **人参与记忆写入**：冲突、低置信事实、新实体、tier 变化可以进入 review 队列，不静默污染长期记忆。
-- **默认保留 provenance**：页面有 timeline 和 sources，派生索引可以从源文件重建。
-- **不是纯向量召回**：`mem ask` 组合 vector、BM25 keyword、SQL/entity match，再用 RRF 融合。
-- **智能体可用，但记忆不归智能体所有**：智能体可以读写流程，但长期事实由用户可审计地控制。
-
-## 适用范围
-
-BrainMem 适合：
-
-- 建一个私有的人生日志和长期个人知识库；
-- 给编程智能体稳定提供你的项目、偏好、决策和历史上下文；
-- 导入旧笔记、Markdown vault、PDF、文本文件和 AI 聊天导出；
-- 为研究、写作、工程实践、个人运营保留可追溯记忆链；
-- 偏好文件和 SQLite，而不是黑盒托管 memory 平台的用户。
-
-它不试图成为多用户 SaaS memory backend、托管聊天机器人平台、图数据库服务，或完全自治的自编辑智能体运行时。
+- **面向长期个人记忆**：记录项目历史、偏好、阅读、对话、决策和观察，而不是只保存零散 message memory。
+- **本地 source of truth**：Markdown、SQLite 和 append-only JSONL 都在你自己的目录里。
+- **人参与的记忆写入**：冲突、低置信事实、新实体和 tier 变化可以进入 review 队列。
+- **默认保留 provenance**：页面包含 timeline 和 sources，派生索引可以从源文件重建。
+- **混合检索**：`mem ask` 结合 vector、BM25 keyword、SQL/entity matching 与 RRF。
+- **智能体可用，但不拥有记忆**：agent 可以调用 BrainMem，但长期事实仍由用户可审计地控制。
 
 ## 核心能力
 
 | 模块 | 能力 |
 | --- | --- |
-| 知识库 | 带 frontmatter、compiled truth、timeline、sources 的 Markdown 页面，也支持记录可复用步骤的 procedure 页面 |
-| 运行状态 | SQLite 管理实体、事实、反链、review、lint、tier proposal |
-| 事件账本 | JSONL append-only event ledger，支持 cursor ingest |
-| Hybrid retrieval | `mem ask` 默认用 vector + keyword + SQL 召回并 RRF 融合，保留 keyword-only fallback |
-| 批量导入 | `mem import` 支持 `.md`、`.txt`、`.pdf`、`.jsonl`，并记录可恢复 job |
-| CLI 工作流 | `init`、`capture`、`ingest`、`reindex`、`import`、`cost-estimate`、`ask`、`procedure`、`review`、`lint`、`rebuild`、`status`、`promote-chat`、`entity` |
-| 模型接入 | LLM 默认 DeepSeek V4；embedding 默认 OpenAI 或 OpenAI-compatible；Anthropic 仍可配置 |
-| 隐私边界 | keyword-only `mem ask` 是本地的；默认 hybrid `mem ask` 会把 query 发给 embedding provider 生成向量；`mem reindex` 调用 embedding provider；`mem ingest` 和 `mem ask --explain` 可能调用外部模型 |
+| 知识库 | 带 frontmatter、compiled truth、timeline、sources 的 Markdown 页面，并支持 procedure 页面 |
+| 运行状态 | SQLite 管理实体、事实、反链、review、lint、tier proposal，以及本地 scratch/snapshot 上下文 |
+| 事件账本 | append-only JSONL event ledger，支持 cursor ingest |
+| 混合检索 | `mem ask` 使用 vector + keyword + SQL + RRF，并保留 keyword-only 本地模式 |
+| Agent 上下文 | `mem inject` 生成 token-bounded prompt context，默认可包含 `scratch/SNAPSHOT.md` |
+| 工作缓冲 | `mem scratch append` 记录当前会话进展，不直接写入 wiki truth |
+| 当前快照 | `mem snapshot rebuild` 从 scratch 生成本地 deterministic snapshot |
+| 可复用流程 | `mem procedure new/run/promote` 维护 raw/tested/stable 状态的 SOP |
+| 批量导入 | `mem import` 支持 `.md`、`.txt`、`.pdf`、`.jsonl` |
+| 隐私边界 | `mem ask --mode keyword-only`、`mem inject --mode keyword-only`、scratch、snapshot、procedure 是本地命令；默认 hybrid ask、reindex、ingest、explain 可能调用 provider |
 
 ## 快速开始
 
-需要 Python 3.11。
+需要 Python 3.11 或更新版本。
 
 ```powershell
 git clone https://github.com/zihanshen29/brainmem.git
@@ -85,7 +69,7 @@ Set-Location .\brain-root
 mem status
 ```
 
-捕获、ingest、reindex，然后提问：
+记录、ingest、reindex 并查询：
 
 ```powershell
 "Remember to review the Phase 1 closeout notes." | mem capture --stdin
@@ -94,7 +78,15 @@ mem reindex
 mem ask "What should I review?"
 ```
 
-启用模型能力：
+为 agent prompt 准备本地上下文：
+
+```powershell
+"source_agent: codex`nChecked the deploy checklist." | mem scratch append --stdin --source codex
+mem snapshot rebuild
+mem inject --query "deploy checklist" --mode keyword-only --budget 4000
+```
+
+启用 LLM-backed 工作流：
 
 ```powershell
 $env:DEEPSEEK_API_KEY = "<your-deepseek-api-key>"
@@ -110,22 +102,23 @@ mem ingest --source laundry
 mem reindex
 ```
 
-`mem init` 默认写入 DeepSeek LLM 配置和 OpenAI-compatible embedding 配置。高级用户可以在 `config.toml` 里混搭 provider：`[deepseek]` 用于 DeepSeek 或兼容 chat API，`[openai]` 用于 OpenAI，`[anthropic]` 用于 Anthropic，`[embedding]` 用于 OpenAI 或其他 OpenAI-compatible embedding endpoint。配置文件只保存环境变量名，真实 key 放在环境变量里。
+`mem init` 默认写入 DeepSeek LLM 配置和 OpenAI-compatible embedding 配置。真实 API key 放在环境变量里，`config.toml` 只保存环境变量名。
 
 ## 数据结构
 
 ```text
 brainmem/
-  src/brain/           Python 包
-  docs/                规格和设计文档
+  src/brain/           Python package
+  docs/                规格与设计文档
   tests/               测试
-  pyproject.toml       打包和依赖配置
+  pyproject.toml       打包与依赖配置
 
 brain-root/            本地运行数据，不要发布到 GitHub
   raw/                 原始输入
   laundry/             待 ingest 材料
   pages/               Markdown wiki 页面
   review/              待确认 review 队列
+  scratch/             working buffer 与 SNAPSHOT.md
   brain.db             SQLite 运行状态和索引
   events.jsonl         append-only 事件日志
 ```
@@ -137,13 +130,18 @@ brain-root/            本地运行数据，不要发布到 GitHub
 - `brain-root/`
 - `brain.db`、`brain.db-wal`、`brain.db-shm`
 - `events.jsonl`
-- `raw/`、`laundry/`、`pages/`、`review/`
+- `raw/`、`laundry/`、`pages/`、`review/`、`scratch/`
 - `.env` 或真实 API key
+- `AGENTS.local.md`、`skills/*/*.local.md`
 
-本地安全命令：
+本地命令：
 
 - `mem status`
 - `mem ask "query" --mode keyword-only`
+- `mem inject --query "query" --mode keyword-only`
+- `mem scratch append`
+- `mem snapshot rebuild`
+- `mem procedure new`、`mem procedure run`、`mem procedure promote`
 - `mem cost-estimate`
 - `mem rebuild --backlinks --index`
 - `mem lint --all`
@@ -151,27 +149,27 @@ brain-root/            本地运行数据，不要发布到 GitHub
 可能把内容发送给配置的 LLM 或 embedding provider 的命令：
 
 - `mem reindex`
-- 默认 hybrid 模式的 `mem ask "query"`，因为 query 会发送给 embedding provider 生成向量
+- 默认 hybrid 模式的 `mem ask "query"`
 - `mem ingest`
 - `mem ask --explain`
 - `mem promote-chat`
-- 会重写 compiled truth 的 review apply
-- 强制页面重建
+- 会重写 compiled truth 的 review apply 流程
+- 强制页面重建中使用 provider 的路径
 
 ## 验证
 
-当前已实现的 Phase 2 构建用下面命令验证：
+当前构建用下面的命令验证：
 
 ```powershell
 .\.venv\Scripts\pytest.exe
 .\.venv\Scripts\ruff.exe check .
 ```
 
-最近本地结果：`338 passed`，`ruff` passed。
+最新本地结果：`415 passed`，`ruff` passed。
 
-## 规格文档
+## 文档
 
-`docs/` 根目录里的文件是当前产品与设计文档：
+当前产品和设计文档在 `docs/` 根目录：
 
 - [SPEC.md](docs/SPEC.md)
 - [architecture.md](docs/architecture.md)
@@ -180,4 +178,4 @@ brain-root/            本地运行数据，不要发布到 GitHub
 - [cli.md](docs/cli.md)
 - [tech-stack.md](docs/tech-stack.md)
 
-Phase 1 和 Phase 2 的历史实施说明归档在 [docs/archive/](docs/archive/)。
+Phase 1 和 Phase 2 历史实施说明归档在 [docs/archive/](docs/archive/)。

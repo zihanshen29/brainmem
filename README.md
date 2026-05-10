@@ -9,9 +9,9 @@
 </p>
 
 <p align="center">
-  <img alt="Python 3.11" src="https://img.shields.io/badge/Python-3.11-3776AB">
+  <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-3776AB">
   <img alt="CLI mem" src="https://img.shields.io/badge/CLI-mem-111827">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-338%20passed-16A34A">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-415%20passed-16A34A">
   <img alt="Local first" src="https://img.shields.io/badge/local--first-Markdown%20%2B%20SQLite-0F766E">
 </p>
 
@@ -23,7 +23,7 @@ The core idea is a **memory compiler**: raw notes, imported files, chats, and ev
 
 It is local-first by default: your runtime brain root stays on your machine. LLM calls are explicit and only happen for commands that need extraction, rewriting, or explanation.
 
-Phase 2 adds hybrid retrieval, sqlite-vec embeddings, bulk import for Markdown/Text/PDF/JSONL, import progress tracking, cost estimates, and status telemetry.
+Phase 2 adds hybrid retrieval, sqlite-vec embeddings, bulk import for Markdown/Text/PDF/JSONL, import progress tracking, cost estimates, status telemetry, and agent-runtime workflows such as token-bounded injection, scratch notes, snapshots, and reusable procedures.
 
 ## Why It Is Different
 
@@ -57,17 +57,17 @@ It is not trying to be a multi-user SaaS memory backend, a hosted chatbot platfo
 | Area | What BrainMem provides |
 | --- | --- |
 | Knowledge base | Markdown pages with frontmatter, compiled truth, timeline, and sources, including procedure pages for reusable operating steps |
-| Runtime state | SQLite schema for entities, facts, backlinks, reviews, lint results, and tier proposals |
+| Runtime state | SQLite schema for entities, facts, backlinks, reviews, lint results, tier proposals, and local scratch/snapshot context |
 | Event ledger | Append-only JSONL event log with cursor-based ingest |
 | Hybrid retrieval | `mem ask` uses vector + keyword + SQL matching with RRF, with keyword-only fallback |
 | Bulk import | `mem import` turns `.md`, `.txt`, `.pdf`, and `.jsonl` files into laundry items with resumable jobs |
-| CLI workflow | `init`, `capture`, `ingest`, `reindex`, `import`, `cost-estimate`, `ask`, `procedure`, `review`, `lint`, `rebuild`, `status`, `promote-chat`, `entity` |
+| CLI workflow | `init`, `capture`, `ingest`, `reindex`, `import`, `cost-estimate`, `ask`, `inject`, `scratch`, `snapshot`, `procedure`, `review`, `lint`, `rebuild`, `status`, `promote-chat`, `entity` |
 | LLM support | DeepSeek V4 by default for LLM work; OpenAI or OpenAI-compatible embeddings; Anthropic remains configurable |
 | Privacy boundary | Keyword-only `mem ask` is local; default hybrid `mem ask` embeds the query through the embedding provider; `mem reindex` calls the embedding provider; `mem ingest` and `mem ask --explain` can call the configured LLM |
 
 ## Quick Start
 
-Requires Python 3.11.
+Requires Python 3.11 or newer.
 
 ```powershell
 git clone https://github.com/zihanshen29/brainmem.git
@@ -92,6 +92,14 @@ Capture, ingest, reindex, and ask:
 mem ingest --source laundry
 mem reindex
 mem ask "What should I review?"
+```
+
+Prepare local context for an agent prompt:
+
+```powershell
+"source_agent: codex`nChecked the deploy checklist." | mem scratch append --stdin --source codex
+mem snapshot rebuild
+mem inject --query "deploy checklist" --mode keyword-only --budget 4000
 ```
 
 Enable LLM-backed workflows:
@@ -144,6 +152,10 @@ Local-only commands:
 
 - `mem status`
 - `mem ask "query" --mode keyword-only`
+- `mem inject --query "query" --mode keyword-only`
+- `mem scratch append`
+- `mem snapshot rebuild`
+- `mem procedure new`, `mem procedure run`, `mem procedure promote`
 - `mem cost-estimate`
 - `mem rebuild --backlinks --index`
 - `mem lint --all`
@@ -167,7 +179,7 @@ The implemented Phase 2 build is checked with:
 .\.venv\Scripts\ruff.exe check .
 ```
 
-Latest local result: `338 passed`, `ruff` passed.
+Latest local result: `415 passed`, `ruff` passed.
 
 ## Specs
 

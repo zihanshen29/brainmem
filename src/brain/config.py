@@ -70,6 +70,15 @@ class TierConfig(BaseModel):
     tier1_threshold: int = Field(..., ge=0)
 
 
+class ProcedureConfig(BaseModel):
+    """Procedure maturity state thresholds."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    stable_success_threshold: int = Field(default=5, ge=1)
+    stable_fail_threshold: int = Field(default=2, ge=1)
+
+
 class LintConfig(BaseModel):
     """Lint behavior settings."""
 
@@ -134,6 +143,7 @@ class Config(BaseModel):
     paths: PathsConfig
     ingest: IngestConfig
     tier: TierConfig
+    procedure: ProcedureConfig = Field(default_factory=ProcedureConfig)
     lint: LintConfig
     git: GitConfig
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)

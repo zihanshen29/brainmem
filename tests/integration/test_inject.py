@@ -89,7 +89,7 @@ def test_cli_inject_small_budget_reports_truncated_and_skipped(brain_root: Path)
             "--query",
             "Alice injection",
             "--budget",
-            "42",
+            "60",
             "--format",
             "markdown",
             "--mode",
@@ -102,7 +102,7 @@ def test_cli_inject_small_budget_reports_truncated_and_skipped(brain_root: Path)
     )
 
     assert result.exit_code == 0
-    assert estimate_tokens(result.stdout) <= 42
+    assert estimate_tokens(result.stdout) <= 60
     assert "Budget used:" in result.stdout
     assert "Truncated: yes" in result.stdout
     assert "Skipped: brain-injection" in result.stdout

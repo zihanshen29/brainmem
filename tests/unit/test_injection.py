@@ -39,9 +39,9 @@ def test_inject_markdown_includes_budget_sources_and_fragments(brain_root: Path)
 
 
 def test_inject_small_budget_truncates_and_skips(brain_root: Path) -> None:
-    result = inject(brain_root, "memory injection Alice", budget=42, mode="keyword-only", top=2)
+    result = inject(brain_root, "memory injection Alice", budget=60, mode="keyword-only", top=2)
 
-    assert result.used_tokens <= 42
+    assert result.used_tokens <= 60
     assert result.used_tokens == estimate_tokens(result.content)
     assert result.fragment_count == 1
     assert result.fragments[0].truncated is True
@@ -58,6 +58,12 @@ def test_inject_tiny_budget_uses_final_content_budget(brain_root: Path) -> None:
     assert result.used_tokens == estimate_tokens(result.content)
     assert result.used_tokens <= 1
     assert result.content == ".\n"
+
+
+def test_estimate_tokens_does_not_undercount_chinese_text() -> None:
+    text = "龘齉齾龖" * 20
+
+    assert estimate_tokens(text) >= len(text)
 
 
 def test_inject_text_output(brain_root: Path) -> None:

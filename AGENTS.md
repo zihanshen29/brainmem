@@ -1,98 +1,130 @@
 # BrainMem Agent Operating Notes
 
-This repository contains the BrainMem codebase. The user's active BrainMem data
-root is:
+This repository contains the BrainMem codebase. Public repository instructions
+must stay portable and must not contain a contributor's private filesystem
+paths.
 
-```powershell
-E:\docu\brain-root
-```
+The user's BrainMem data root is referenced as `${BRAIN_ROOT}`. Resolve it in
+this order:
 
-When operating against the user's memory data from this repo or any other
-working directory, pass:
+1. An explicit `--brain-root` flag or MCP `brain_root` argument.
+2. The `BRAIN_ROOT` environment variable.
+3. A local user config such as `~/.config/brainmem/config.toml` with
+   `data_root`.
+4. Default: `~/brain`.
 
-```powershell
---brain-root E:\docu\brain-root
-```
-
-Use `mem` for normal CLI examples. If the wrapper is unavailable, use the direct
-CLI at `E:\docu\brain\.venv\Scripts\mem.exe`.
+Use `AGENTS.local.md` for machine-specific notes such as Windows paths,
+private data roots, or local wrapper locations. `AGENTS.local.md` is ignored by
+Git and must not be committed.
 
 ## Contribution Rules
 
 - Do not edit `brain.db` or `events.jsonl` manually.
-- Do not rewrite or delete user memory files except through the supported
-  BrainMem commands and only when the user has asked for that operation.
-- Git commands in this workspace must set `$env:GIT_CONFIG_GLOBAL='NUL'`.
-- Keep docs consistent with the user-level BrainMem policy. Repository docs may
-  add operational detail, but must not weaken privacy, review, or consent rules.
-- Prefer ASCII in agent-facing docs unless a target file already uses another
-  character set or the user explicitly asks otherwise.
+- Do not rewrite or delete user memory files except through supported BrainMem
+  commands and only when the user has asked for that operation.
+- Keep docs consistent with BrainMem privacy, review, and consent rules.
+- Do not commit API keys, local paths, user data roots, private usernames, or
+  machine-specific wrapper paths.
+- Prefer portable examples using `mem` and `${BRAIN_ROOT}`.
 
-## When Agents Should Query Memory
+## Brain Root Usage
 
-Query BrainMem when the user asks to recall, search, summarize, compare, or use
-long-term personal/project memory. Also query when durable memory would
-materially reduce uncertainty for a task the user has delegated, such as
-checking known preferences, project status, prior decisions, or open threads.
+BrainMem must work from any project directory. When operating on memory data,
+pass the root explicitly:
 
-Use local-only retrieval first unless the user has explicitly allowed provider
-use:
-
-```powershell
-mem ask "query" --brain-root E:\docu\brain-root --mode keyword-only --top 5
+```sh
+mem ask "query" --brain-root "${BRAIN_ROOT}" --mode keyword-only --top 5
 ```
 
-Do not query BrainMem for routine code reading, normal repository navigation,
-or facts that are already present in the current conversation or workspace
-files. Do not use memory as a substitute for reading the relevant code.
+If `mem` is not on PATH, the user should configure a local wrapper outside the
+repository or document it in `AGENTS.local.md`.
 
-## When Agents Should Write Memory
+## Decision Framework For Agents
 
-Write memory only when the user asks to save, remember, ingest, promote, or
-otherwise update BrainMem, or when the task clearly includes creating durable
-memory artifacts. Agent-created notes must include source context in the note
-text, for example:
+Use this sequence when a user task may involve long-term memory.
 
-```text
-source_agent: codex
-source_context: <short task or conversation summary>
+### Step 1 - Task Type
+
+- Recall/search/summarize saved context: use local recall first.
+- Feed retrieved memory into another LLM prompt: use `mem inject`.
+- Save a raw note or user-stated durable fact: use `mem capture`.
+- Track current session progress without committing wiki truth: use
+  `mem scratch append`.
+- Consolidate current session state before injection: use
+  `mem snapshot rebuild`, then `mem inject`.
+- Manage reusable procedures/runbooks: use `mem procedure new/run/promote`.
+- Ordinary code navigation or facts already in the workspace: do not query
+  BrainMem.
+
+### Step 2 - Context Relevance
+
+Before answering, ask whether the user's personal/project history may contain
+the answer. Query BrainMem for user projects, preferences, prior decisions,
+people, teams, customers, long-running tasks, or remembered procedures. Do not
+query for generic API syntax or code facts that should come from the current
+repository.
+
+### Step 3 - Information Capture
+
+Capture only durable information the user asks to save or clearly intends to
+persist. Agent-created notes must include source context:
+
+```sh
+printf '%s\n' \
+  'source_agent: codex' \
+  'source_context: <short task or conversation summary>' \
+  '' \
+  '<memory text>' |
+  mem capture --brain-root "${BRAIN_ROOT}" --stdin
 ```
 
-Use `mem capture` for quick, raw notes that should land in laundry for later
-ingest and review. Capture is appropriate for user-stated preferences, durable
-project decisions, handoff notes, todo/context snapshots, and observations the
-user explicitly wants remembered. Capture is not appropriate for transient
-debug output, secrets, API keys, or unverified guesses.
+Use scratch instead of capture for temporary session-progress notes:
+
+```sh
+printf '%s\n' '<working context>' |
+  mem scratch append --brain-root "${BRAIN_ROOT}" --stdin --source codex
+```
+
+### Step 4 - Entity Disambiguation
+
+Before answering questions involving names of people, projects, teams,
+customers, deployments, or short ambiguous labels:
+
+1. If the name is short or ambiguous, run local recall with a wider top count.
+2. If multiple plausible matches appear, ask the user which one they mean.
+3. If one clear match appears, proceed using that entity's compiled truth and
+   sources.
 
 Example:
 
-```powershell
-@"
-source_agent: codex
-source_context: agent handoff
-
-<memory text>
-"@ | mem capture --brain-root E:\docu\brain-root --stdin
+```sh
+mem ask "Alex" --brain-root "${BRAIN_ROOT}" --mode keyword-only --top 10
 ```
 
-## When Agents Should Not Query Or Write
+### Step 5 - High-Risk Lookback
 
-- Do not query or write memory when the user asks to avoid memory use.
-- Do not write secrets, credentials, private keys, tokens, or raw sensitive
-  content unless the user explicitly instructs it and understands the storage
-  implications.
-- Do not run provider-backed commands over sensitive content without clear
-  permission.
-- Do not automatically approve, reject, or apply review queue items.
-- Do not use deprecated MemPalace commands for new memory work unless the user
-  explicitly requests an old-backup audit.
+Before destructive or high-risk work such as deletion, migrations, broad
+refactors, credential changes, deploys, or data movement, search for relevant
+prior decisions, failed attempts, and procedure capsules:
+
+```sh
+mem ask "deploy rollback migration failure" --brain-root "${BRAIN_ROOT}" --mode keyword-only --top 10
+mem ask "deploy" --brain-root "${BRAIN_ROOT}" --mode keyword-only --type procedure --top 10
+```
+
+If a previous failure or runbook is found, mention the risk and reuse the
+procedure rather than guessing.
 
 ## Privacy Boundary
 
 Local-only commands do not call an external model or embedding provider:
 
-- `mem status --brain-root E:\docu\brain-root`
-- `mem ask "query" --brain-root E:\docu\brain-root --mode keyword-only`
+- `mem status --brain-root "${BRAIN_ROOT}"`
+- `mem ask "query" --brain-root "${BRAIN_ROOT}" --mode keyword-only`
+- `mem inject --brain-root "${BRAIN_ROOT}" --mode keyword-only`
+- `mem scratch append --brain-root "${BRAIN_ROOT}" ...`
+- `mem snapshot rebuild --brain-root "${BRAIN_ROOT}"`
+- `mem procedure new/run/promote --brain-root "${BRAIN_ROOT}"`
 - `mem cost-estimate ...`
 - deterministic rebuild/lint commands such as `mem lint --all` and
   `mem rebuild --backlinks --index`
@@ -101,14 +133,15 @@ Provider-backed commands require explicit user permission before use on
 sensitive or user-provided content:
 
 - default hybrid `mem ask "query"` because the query is embedded
+- semantic `mem ask`
 - `mem ask "query" --explain`
 - `mem ingest`
 - `mem reindex`
 - `mem promote-chat`
 - review apply flows that rewrite compiled truth
 
-Before provider-backed commands, hydrate API keys from the Windows user
-environment. Never print, store, or commit API keys.
+Before provider-backed commands, hydrate API keys from the user's environment.
+Never print, store, or commit API keys.
 
 ## Review Queue Rule
 
@@ -120,15 +153,19 @@ action.
 ## CLI And MCP Tool Correspondence
 
 Every MCP tool or skill wrapper for BrainMem should map cleanly to a supported
-CLI operation and preserve the same privacy and consent boundary:
+CLI operation and preserve the same privacy and consent boundary.
 
 | Agent intent | CLI operation | MCP/tool behavior |
 | --- | --- | --- |
 | Check health | `mem status` | Safe local status check. |
-| Local recall | `mem ask --mode keyword-only` | Default recall path when consent for providers is absent. |
+| Local recall | `mem ask --mode keyword-only` | Default recall path when provider consent is absent. |
 | Hybrid recall | `mem ask` | Provider-backed; call only after explicit permission where needed. |
-| Explain answer | `mem ask --explain` | Provider-backed; call only after explicit permission. |
+| Injection context | `mem inject` | Local by default; token-bounded prompt context, includes snapshot by default. |
 | Capture note | `mem capture --stdin` | Writes raw note to laundry; include source context. |
+| Working buffer | `mem scratch append` | Local session-progress note, not compiled wiki truth. |
+| Distill current state | `mem snapshot rebuild` | Local deterministic snapshot from scratch. |
+| Procedure capsule | `mem procedure new/run/promote` | Manual procedure SOP with maturity state. |
+| Recall procedures | `mem ask --type procedure --mode keyword-only` | Find reusable runbooks before high-risk work. |
 | Estimate import | `mem cost-estimate` | Local cost planning before ingest/import. |
 | Ingest laundry | `mem ingest` | Provider-backed; requires explicit permission. |
 | Build embeddings | `mem reindex` | Provider-backed; requires explicit permission. |
@@ -138,5 +175,4 @@ CLI operation and preserve the same privacy and consent boundary:
 
 MCP docstrings and skill instructions must emphasize when to call the tool, not
 only what it does. They should state whether the tool is local-only,
-provider-backed, or writes durable memory, and should require
-`--brain-root E:\docu\brain-root` or the equivalent structured argument.
+provider-backed, or writes durable memory.

@@ -14,6 +14,8 @@ build/
 .env
 .env.*
 !.env.example
+AGENTS.local.md
+skills/*/*.local.md
 
 # Runtime brain roots and local memory data
 /brain-root/

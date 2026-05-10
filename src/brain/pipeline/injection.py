@@ -14,7 +14,7 @@ from brain.pipeline.ask import AskMode, ask
 
 OutputFormat = Literal["markdown", "text"]
 
-TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[^\x00-\x7F]")
+CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 MIN_TRUNCATED_FRAGMENT_TOKENS = 8
 
 
@@ -158,9 +158,15 @@ def estimate_tokens(text: str) -> int:
     """Deterministic lightweight token estimate used for budget decisions."""
     if not text:
         return 0
-    lexical = len(TOKEN_RE.findall(text))
-    chars = len(text)
-    return max(1, max(lexical, math.ceil(chars / 4)))
+    try:
+        import tiktoken
+
+        encoding = tiktoken.get_encoding("cl100k_base")
+        return max(1, len(encoding.encode(text)))
+    except Exception:
+        cjk_chars = len(CJK_RE.findall(text))
+        other_chars = len(text) - cjk_chars
+        return max(1, cjk_chars + math.ceil(other_chars / 3.5))
 
 
 def _resolve_snapshot_path(paths: BrainPaths, snapshot_path: Path | None) -> Path:

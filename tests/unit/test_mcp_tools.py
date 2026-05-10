@@ -9,7 +9,9 @@ from pathlib import Path
 import pytest
 
 from brain.mcp import tools
+from brain.models import Frontmatter, Page, PageType, ProcedureStatus
 from brain.models.event import Event, EventKind
+from brain.pages import write_page
 
 VALID_ULID = "01KQA8R9KVCG906A0203VYEQF7"
 SECOND_ULID = "01KQA8VZMXBAV7AKF5JFB4KQ9C"
@@ -26,8 +28,14 @@ def test_mcp_tools_importable() -> None:
         brain_ask,
         brain_capture,
         brain_inject,
+        brain_procedure_list,
+        brain_procedure_new,
+        brain_procedure_promote,
+        brain_procedure_run,
         brain_recent_events,
         brain_review_queue,
+        brain_scratch_append,
+        brain_snapshot_rebuild,
         brain_status,
     )
 
@@ -35,6 +43,12 @@ def test_mcp_tools_importable() -> None:
     assert brain_ask
     assert brain_capture
     assert brain_inject
+    assert brain_scratch_append
+    assert brain_snapshot_rebuild
+    assert brain_procedure_list
+    assert brain_procedure_new
+    assert brain_procedure_run
+    assert brain_procedure_promote
     assert brain_review_queue
     assert brain_recent_events
 
@@ -45,6 +59,12 @@ def test_mcp_tool_docstrings_explain_when_to_call() -> None:
         tools.brain_ask,
         tools.brain_capture,
         tools.brain_inject,
+        tools.brain_scratch_append,
+        tools.brain_snapshot_rebuild,
+        tools.brain_procedure_list,
+        tools.brain_procedure_new,
+        tools.brain_procedure_run,
+        tools.brain_procedure_promote,
         tools.brain_review_queue,
         tools.brain_recent_events,
     ]
@@ -197,6 +217,139 @@ def test_brain_inject_can_disable_snapshot(
 
     assert result == {"include_snapshot": False}
     assert calls[0]["include_snapshot"] is False
+
+
+def test_brain_scratch_append_uses_pipeline_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_append_working(root: Path, text: str, **kwargs: object) -> dict[str, object]:
+        calls.append({"root": root, "text": text, **kwargs})
+        return {"path": "scratch/working.md", "source": kwargs["source"]}
+
+    fake_module = types.SimpleNamespace(append_working=fake_append_working)
+    monkeypatch.setitem(sys.modules, "brain.pipeline.scratch", fake_module)
+
+    result = tools.brain_scratch_append("working note", brain_root=tmp_path, source="codex")
+
+    assert result == {"path": "scratch/working.md", "source": "codex"}
+    assert calls == [{"root": tmp_path, "text": "working note", "source": "codex"}]
+
+
+def test_brain_snapshot_rebuild_uses_pipeline_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_rebuild_snapshot(root: Path, **kwargs: object) -> dict[str, object]:
+        calls.append({"root": root, **kwargs})
+        return {"path": "scratch/SNAPSHOT.md", "entries": 2}
+
+    fake_module = types.SimpleNamespace(rebuild_snapshot=fake_rebuild_snapshot)
+    monkeypatch.setitem(sys.modules, "brain.pipeline.scratch", fake_module)
+
+    result = tools.brain_snapshot_rebuild(tmp_path, max_items=2, max_chars=1200)
+
+    assert result == {"path": "scratch/SNAPSHOT.md", "entries": 2}
+    assert calls == [{"root": tmp_path, "max_items": 2, "max_chars": 1200}]
+
+
+def test_brain_procedure_list_reads_procedure_pages(tmp_path: Path) -> None:
+    root = tmp_path / "brain"
+    procedure_path = root / "pages" / "procedures" / "deploy.md"
+    write_page(
+        procedure_path,
+        Page(
+            frontmatter=Frontmatter(
+                type=PageType.PROCEDURE,
+                slug="deploy",
+                title="Deploy",
+                created=datetime(2026, 5, 10, tzinfo=UTC),
+                updated=datetime(2026, 5, 10, tzinfo=UTC),
+                status=ProcedureStatus.STABLE,
+                success_count=5,
+                fail_count=0,
+            ),
+            compiled_truth="Deploy procedure.",
+            timeline=[],
+            sources=[],
+        ),
+    )
+
+    result = tools.brain_procedure_list(root, status="stable")
+
+    assert result["count"] == 1
+    assert result["procedures"][0]["slug"] == "deploy"
+    assert result["procedures"][0]["status"] == "stable"
+    assert result["procedures"][0]["path"] == "pages/procedures/deploy.md"
+
+
+def test_brain_procedure_list_rejects_non_positive_limit() -> None:
+    with pytest.raises(ValueError, match="limit must be positive"):
+        tools.brain_procedure_list(limit=0)
+
+
+def test_brain_procedure_new_run_promote_use_pipeline_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_create(root: Path, slug: str, **kwargs: object) -> dict[str, object]:
+        calls.append({"fn": "new", "root": root, "slug": slug, **kwargs})
+        return {"slug": slug, "status": "raw"}
+
+    def fake_run(root: Path, slug: str, **kwargs: object) -> dict[str, object]:
+        calls.append({"fn": "run", "root": root, "slug": slug, **kwargs})
+        return {"slug": slug, "status": "tested"}
+
+    def fake_promote(root: Path, slug: str, **kwargs: object) -> dict[str, object]:
+        calls.append({"fn": "promote", "root": root, "slug": slug, **kwargs})
+        return {"slug": slug, "status": kwargs["status"]}
+
+    fake_module = types.SimpleNamespace(
+        create_procedure=fake_create,
+        run_procedure=fake_run,
+        promote_procedure=fake_promote,
+    )
+    monkeypatch.setitem(sys.modules, "brain.pipeline.procedure", fake_module)
+
+    assert tools.brain_procedure_new("deploy", "Deploy", brain_root=tmp_path)["status"] == "raw"
+    assert (
+        tools.brain_procedure_run("deploy", "success", "ok", brain_root=tmp_path)["status"]
+        == "tested"
+    )
+    assert (
+        tools.brain_procedure_promote("deploy", "stable", brain_root=tmp_path)["status"]
+        == "stable"
+    )
+    assert calls == [
+        {
+            "fn": "new",
+            "root": tmp_path,
+            "slug": "deploy",
+            "title": "Deploy",
+            "auto_commit": False,
+        },
+        {
+            "fn": "run",
+            "root": tmp_path,
+            "slug": "deploy",
+            "result": "success",
+            "note": "ok",
+            "auto_commit": False,
+        },
+        {
+            "fn": "promote",
+            "root": tmp_path,
+            "slug": "deploy",
+            "status": "stable",
+            "auto_commit": False,
+        },
+    ]
 
 
 def test_brain_review_queue_lists_pending_only(

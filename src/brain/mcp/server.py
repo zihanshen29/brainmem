@@ -10,6 +10,12 @@ TOOL_NAMES = [
     "brain_ask",
     "brain_capture",
     "brain_inject",
+    "brain_scratch_append",
+    "brain_snapshot_rebuild",
+    "brain_procedure_list",
+    "brain_procedure_new",
+    "brain_procedure_run",
+    "brain_procedure_promote",
     "brain_review_queue",
     "brain_recent_events",
 ]

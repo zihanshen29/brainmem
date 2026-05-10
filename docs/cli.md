@@ -18,6 +18,9 @@ mem capture [<kind>]           # 快速记录入口
 
 # Phase 2 (新增)
 mem ask <query>                # 默认变成 hybrid retrieval
+mem inject --query <query>     # 生成 token-bounded prompt context
+mem scratch append             # 追加本地 working buffer
+mem snapshot rebuild           # 从 scratch 重建当前状态快照
 mem procedure <slug>           # 手动维护 procedure 页面
 mem reindex                    # 构建/更新 embedding 索引
 mem import <path>              # bulk import
@@ -49,9 +52,50 @@ mem ask "<query>" [--mode hybrid|keyword-only|semantic|sql] [--top N] [--type <t
 
 ---
 
+## `mem inject`
+
+生成可直接放进 LLM prompt 的上下文包。默认使用 `--mode keyword-only`，因此不会调用 embedding provider；如果显式选择 `hybrid` 或 `semantic`，就按 `mem ask` 的 provider 边界处理。
+
+```
+mem inject --query "<query>" [--budget N] [--format markdown|text]
+           [--mode keyword-only|hybrid|semantic|sql] [--top N]
+           [--snapshot|--no-snapshot]
+```
+
+- `--budget N` — 输出 token 预算，默认 10000。
+- `--format markdown|text` — 输出格式，默认 markdown。
+- `--snapshot/--no-snapshot` — 是否先注入 `scratch/SNAPSHOT.md`，默认开启。
+
+`mem inject` 适合 agent 把检索结果继续交给另一个模型时使用；普通面向人的查询仍用 `mem ask`。
+
+---
+
+## `mem scratch`
+
+本地-only working buffer，用来记录当前会话进展，不会把内容提升为 wiki truth，也不会调用外部 provider。
+
+```
+mem scratch append "<text>" [--source <source>]
+mem scratch append --stdin [--source <source>]
+```
+
+---
+
+## `mem snapshot`
+
+从 scratch working buffer 重建 `scratch/SNAPSHOT.md`。当前实现是确定性的本地摘要，不调用 LLM。
+
+```
+mem snapshot rebuild [--max-items N] [--max-chars N]
+```
+
+`mem inject` 默认会读取 snapshot，因此涉及“当前状态”的 agent 查询应先运行 `mem snapshot rebuild`。
+
+---
+
 ## `mem procedure`
 
-手动维护可复用流程页面。本轮不从 provider-backed ingest 自动识别 procedure；需要通过 CLI 显式创建、记录运行或提升状态。
+手动维护可复用流程页面。Procedure 有 `raw`、`tested`、`stable` 三个成熟度状态；`run` 会记录成功/失败次数，并按 `config.toml` 的 `[procedure]` 阈值自动升级或降级。
 
 ```
 mem procedure new <slug> --title "<title>"
@@ -62,7 +106,17 @@ mem ask "<query>" --type procedure
 
 Procedure 页面会进入普通 page 路径：`mem status` 的 `pages_by_type` 会统计 `procedure`，`mem ask --type procedure` 可过滤检索，`mem reindex --dry-run` 会按 compiled truth 和 timeline 估算 chunks。
 
-### 自动降级
+默认成熟度阈值：
+
+```toml
+[procedure]
+stable_success_threshold = 5
+stable_fail_threshold = 2
+```
+
+---
+
+## (P2) `mem ask` 自动降级
 
 如果 `embedding_index` 是空的（用户尚未运行 reindex），`mem ask` 自动降级到 `--mode keyword-only` 并提示：
 
@@ -232,7 +286,7 @@ mem cost-estimate <path> --kind md,pdf    # 限定文件类型
 ```
 $ mem status
 
-Brain root: C:\Users\zihan\brain  (47.3 MB, 142 commits)
+Brain root: ~/brain  (47.3 MB, 142 commits)
 
 Pages:
   entities      8

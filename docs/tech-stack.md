@@ -2,9 +2,9 @@
 
 本文件锁定技术选型和项目惯例。Phase 2 在 Phase 1 基础上**增量添加**，不替换原有依赖。
 
-## 1. 运行环境（无变化）
+## 1. 运行环境
 
-- **Python 3.11**
+- **Python 3.11+**
 - **Windows 10/11** 主要目标平台
 - 用户从 PowerShell / Windows Terminal 运行命令
 
@@ -17,7 +17,7 @@
 name = "brain"
 version = "0.2.0"  # bump
 description = "Personal memory system with markdown wiki + SQLite backbone"
-requires-python = ">=3.11,<3.12"
+requires-python = ">=3.11"
 dependencies = [
     # Phase 1
     "typer>=0.12.0",
@@ -41,6 +41,7 @@ dependencies = [
 
 [project.scripts]
 mem = "brain.cli.main:app"
+mem-mcp = "brain.mcp.server:main"
 
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]

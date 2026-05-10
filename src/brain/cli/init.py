@@ -207,6 +207,10 @@ tier3_threshold = 1
 tier2_threshold = 3
 tier1_threshold = 8
 
+[procedure]
+stable_success_threshold = 5
+stable_fail_threshold = 2
+
 [lint]
 stale_days = 90
 

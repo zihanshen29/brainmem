@@ -7,7 +7,7 @@ from pathlib import Path
 import ulid
 from pydantic import BaseModel, ConfigDict
 
-from brain.config import load_config
+from brain.config import ProcedureConfig, load_config
 from brain.exceptions import BrainError
 from brain.ledger import append_event
 from brain.models import Event, EventKind, Frontmatter, Page, PageType, ProcedureStatus
@@ -106,6 +106,7 @@ def run_procedure(
         raise BrainError("procedure run note is required")
 
     paths = BrainPaths(Path(brain_root))
+    config = load_config(paths.config_path)
     path = _procedure_path(paths, slug)
     page = _load_procedure_page(path)
     now = _now_utc()
@@ -117,17 +118,19 @@ def run_procedure(
         timestamp=now,
     )
     current_status = _procedure_status(page.frontmatter.status)
-    next_status = (
-        ProcedureStatus.TESTED
-        if outcome is ProcedureRunResult.SUCCESS and current_status is ProcedureStatus.RAW
-        else current_status
-    )
     success_count = _count(page.frontmatter.success_count)
     fail_count = _count(page.frontmatter.fail_count)
     if outcome is ProcedureRunResult.SUCCESS:
         success_count += 1
     else:
         fail_count += 1
+    next_status = _next_status(
+        current_status,
+        success_count=success_count,
+        fail_count=fail_count,
+        outcome=outcome,
+        config=config.procedure,
+    )
 
     updated_page = page.model_copy(
         update={
@@ -332,6 +335,35 @@ def _procedure_status(status: ProcedureStatus | None) -> ProcedureStatus:
     if status is None:
         raise BrainError("procedure page is missing status")
     return status
+
+
+def _next_status(
+    current_status: ProcedureStatus,
+    *,
+    success_count: int,
+    fail_count: int,
+    outcome: ProcedureRunResult,
+    config: ProcedureConfig,
+) -> ProcedureStatus:
+    if outcome is ProcedureRunResult.SUCCESS:
+        if current_status is ProcedureStatus.RAW:
+            return ProcedureStatus.TESTED
+        if (
+            current_status is ProcedureStatus.TESTED
+            and success_count >= config.stable_success_threshold
+            and fail_count == 0
+        ):
+            return ProcedureStatus.STABLE
+        return current_status
+
+    if (
+        current_status is ProcedureStatus.STABLE
+        and fail_count >= config.stable_fail_threshold
+    ):
+        return ProcedureStatus.TESTED
+    if current_status is ProcedureStatus.TESTED and fail_count > success_count:
+        return ProcedureStatus.RAW
+    return current_status
 
 
 def _count(value: int | None) -> int:

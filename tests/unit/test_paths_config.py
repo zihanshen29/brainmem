@@ -139,6 +139,8 @@ def test_load_config_valid_file(tmp_path: Path) -> None:
     assert config.tier.tier3_threshold == 1
     assert config.tier.tier2_threshold == 3
     assert config.tier.tier1_threshold == 8
+    assert config.procedure.stable_success_threshold == 5
+    assert config.procedure.stable_fail_threshold == 2
     assert config.lint.stale_days == 90
     assert config.git.auto_commit is True
 

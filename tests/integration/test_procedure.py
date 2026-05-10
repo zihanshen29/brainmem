@@ -87,6 +87,103 @@ def test_procedure_run_success_and_fail_update_counts_status_last_run_and_timeli
     assert _ledger_events(brain_root)[-1]["id"] == failed.event_id
 
 
+def test_procedure_auto_promotes_to_stable_after_configured_successes(
+    brain_root: Path,
+) -> None:
+    config_path = brain_root / "config.toml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace(
+            "stable_success_threshold = 5",
+            "stable_success_threshold = 2",
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+    create_procedure(brain_root, "daily-review", title="Daily Review", auto_commit=False)
+
+    first = run_procedure(
+        brain_root,
+        "daily-review",
+        result="success",
+        note="first clean run",
+        auto_commit=False,
+    )
+    second = run_procedure(
+        brain_root,
+        "daily-review",
+        result="success",
+        note="second clean run",
+        auto_commit=False,
+    )
+
+    page = parse_page(brain_root / "pages" / "procedures" / "daily-review.md")
+    assert first.status is ProcedureStatus.TESTED
+    assert second.status is ProcedureStatus.STABLE
+    assert page.frontmatter.status is ProcedureStatus.STABLE
+    assert page.frontmatter.success_count == 2
+    assert page.frontmatter.fail_count == 0
+
+
+def test_procedure_stable_downgrades_after_configured_failures(brain_root: Path) -> None:
+    create_procedure(brain_root, "daily-review", title="Daily Review", auto_commit=False)
+    promote_procedure(brain_root, "daily-review", status="stable", auto_commit=False)
+
+    first = run_procedure(
+        brain_root,
+        "daily-review",
+        result="fail",
+        note="temporary issue",
+        auto_commit=False,
+    )
+    second = run_procedure(
+        brain_root,
+        "daily-review",
+        result="fail",
+        note="repeat issue",
+        auto_commit=False,
+    )
+
+    page = parse_page(brain_root / "pages" / "procedures" / "daily-review.md")
+    assert first.status is ProcedureStatus.STABLE
+    assert second.status is ProcedureStatus.TESTED
+    assert page.frontmatter.status is ProcedureStatus.TESTED
+    assert page.frontmatter.fail_count == 2
+
+
+def test_procedure_tested_downgrades_to_raw_when_failures_overtake_successes(
+    brain_root: Path,
+) -> None:
+    create_procedure(brain_root, "daily-review", title="Daily Review", auto_commit=False)
+    run_procedure(
+        brain_root,
+        "daily-review",
+        result="success",
+        note="clean run",
+        auto_commit=False,
+    )
+    first_fail = run_procedure(
+        brain_root,
+        "daily-review",
+        result="fail",
+        note="first issue",
+        auto_commit=False,
+    )
+    second_fail = run_procedure(
+        brain_root,
+        "daily-review",
+        result="fail",
+        note="second issue",
+        auto_commit=False,
+    )
+
+    page = parse_page(brain_root / "pages" / "procedures" / "daily-review.md")
+    assert first_fail.status is ProcedureStatus.TESTED
+    assert second_fail.status is ProcedureStatus.RAW
+    assert page.frontmatter.status is ProcedureStatus.RAW
+    assert page.frontmatter.success_count == 1
+    assert page.frontmatter.fail_count == 2
+
+
 def test_procedure_promote_updates_status_and_appends_timeline(brain_root: Path) -> None:
     create_procedure(brain_root, "daily-review", title="Daily Review", auto_commit=False)
 
