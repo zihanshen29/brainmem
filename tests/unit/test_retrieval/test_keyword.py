@@ -29,3 +29,22 @@ def test_bm25_search_ranks_expected_pages_in_top_three() -> None:
     ]
     assert [hit.rank for hit in hits] == [1, 2, 3]
     assert all(hit.path == "keyword" for hit in hits)
+
+
+def test_bm25_search_applies_page_weights_before_ranking() -> None:
+    chunks = [
+        chunk("raw-procedure", "release checklist checklist"),
+        chunk("stable-procedure", "release checklist"),
+        chunk("unrelated", "dinner vegetables"),
+        chunk("other", "calendar budget"),
+        chunk("notes", "meeting notes"),
+    ]
+
+    hits = bm25_search(
+        chunks,
+        "release checklist",
+        top=2,
+        weights={"raw-procedure": 0.5, "stable-procedure": 2.0},
+    )
+
+    assert [hit.page_slug for hit in hits] == ["stable-procedure", "raw-procedure"]

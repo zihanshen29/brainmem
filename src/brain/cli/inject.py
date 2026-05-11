@@ -6,6 +6,7 @@ from typing import Annotated
 import typer
 
 from brain.exceptions import BrainError
+from brain.models import PageType
 from brain.pipeline.injection import OutputFormat
 
 DEFAULT_BUDGET = 10000
@@ -33,6 +34,14 @@ def inject_command(
         int,
         typer.Option("--top", min=1, help="Maximum number of pages to retrieve before budgeting."),
     ] = DEFAULT_TOP,
+    page_type: Annotated[
+        PageType | None,
+        typer.Option("--type", help="Limit retrieved fragments to one page type.", case_sensitive=False),
+    ] = None,
+    include_slug: Annotated[
+        list[str] | None,
+        typer.Option("--include-slug", help="Force include a page slug before retrieved fragments."),
+    ] = None,
     include_snapshot: Annotated[
         bool,
         typer.Option("--snapshot/--no-snapshot", help="Include scratch/SNAPSHOT.md before retrieved pages."),
@@ -51,6 +60,8 @@ def inject_command(
             output_format=output_format,
             mode=mode,
             top=top,
+            page_type=page_type,
+            include_slugs=include_slug or [],
             include_snapshot=include_snapshot,
         )
     except BrainError as exc:
@@ -70,6 +81,8 @@ def _run_inject(
     output_format: OutputFormat,
     mode: str,
     top: int,
+    page_type: PageType | None,
+    include_slugs: list[str],
     include_snapshot: bool,
 ):
     from brain.pipeline.injection import inject
@@ -81,5 +94,7 @@ def _run_inject(
         output_format=output_format,
         mode=mode,
         top=top,
+        page_type=page_type,
+        include_slugs=include_slugs,
         include_snapshot=include_snapshot,
     )

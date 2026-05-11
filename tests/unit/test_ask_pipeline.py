@@ -20,6 +20,7 @@ from brain.models import (
     Frontmatter,
     Page,
     PageType,
+    ProcedureStatus,
     RetrievalHit,
     Tier,
 )
@@ -184,6 +185,101 @@ def test_page_type_filter_and_top_limit(brain_root: Path) -> None:
     assert len(result.results) == 1
     assert result.results[0].page_type is PageType.ENTITY
     assert result.results[0].slug == "zhang-san"
+
+
+def test_page_type_filter_is_applied_before_top_limit(brain_root: Path) -> None:
+    result = ask(
+        brain_root,
+        "computer vision zhang",
+        top=1,
+        page_type=PageType.PROJECT,
+        mode="keyword-only",
+    )
+
+    assert [page.slug for page in result.results] == ["cv-coursework"]
+
+
+def test_keyword_retrieval_weights_procedure_maturity(brain_root: Path) -> None:
+    now = datetime(2026, 4, 28, 12, 0, tzinfo=UTC)
+    _write_page(
+        brain_root / "pages" / "procedures" / "raw-release.md",
+        Page(
+            frontmatter=Frontmatter(
+                type=PageType.PROCEDURE,
+                slug="raw-release",
+                title="Raw Release",
+                created=now,
+                updated=now,
+                tags=[],
+                aliases=[],
+                external_ids={},
+                status=ProcedureStatus.RAW,
+                success_count=0,
+                fail_count=0,
+            ),
+            compiled_truth="release checklist deploy procedure",
+            timeline=[],
+            sources=[],
+        ),
+    )
+    _write_page(
+        brain_root / "pages" / "procedures" / "stable-release.md",
+        Page(
+            frontmatter=Frontmatter(
+                type=PageType.PROCEDURE,
+                slug="stable-release",
+                title="Stable Release",
+                created=now,
+                updated=now,
+                tags=[],
+                aliases=[],
+                external_ids={},
+                status=ProcedureStatus.STABLE,
+                success_count=3,
+                fail_count=0,
+            ),
+            compiled_truth="release checklist deploy procedure",
+            timeline=[],
+            sources=[],
+        ),
+    )
+
+    result = ask(
+        brain_root,
+        "release checklist deploy procedure",
+        top=2,
+        page_type=PageType.PROCEDURE,
+        mode="keyword-only",
+    )
+
+    assert [page.slug for page in result.results] == ["stable-release", "raw-release"]
+
+
+def test_keyword_retrieval_can_find_scratch_snapshot(brain_root: Path) -> None:
+    snapshot = brain_root / "scratch" / "SNAPSHOT.md"
+    snapshot.parent.mkdir(parents=True, exist_ok=True)
+    snapshot.write_text("transient deployment handoff marker", encoding="utf-8")
+
+    result = ask(brain_root, "transient deployment handoff", top=3, mode="keyword-only")
+
+    snapshot_result = next(page for page in result.results if page.slug == "scratch-snapshot")
+    assert snapshot_result.relative_path == "scratch/SNAPSHOT.md"
+    assert snapshot_result.debug["marker"] == "scratch/snapshot"
+
+
+def test_keyword_retrieval_can_find_scratch_working_buffer(brain_root: Path) -> None:
+    working = brain_root / "scratch" / "working.md"
+    working.parent.mkdir(parents=True, exist_ok=True)
+    working.write_text(
+        "## 2026-05-11T00:00:00Z - source: codex\n\nworking auth bug marker",
+        encoding="utf-8",
+    )
+
+    result = ask(brain_root, "working auth bug", top=5, mode="keyword-only")
+
+    working_result = next(page for page in result.results if page.slug == "scratch-working")
+    assert working_result.relative_path == "scratch/working.md"
+    assert working_result.debug["marker"] == "scratch/working"
 
 
 def test_empty_query_raises_brain_error(brain_root: Path) -> None:

@@ -11,7 +11,7 @@
 <p align="center">
   <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-3776AB">
   <img alt="CLI mem" src="https://img.shields.io/badge/CLI-mem-111827">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-415%20passed-16A34A">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-433%20passed-16A34A">
   <img alt="Local first" src="https://img.shields.io/badge/local--first-Markdown%20%2B%20SQLite-0F766E">
 </p>
 
@@ -179,7 +179,7 @@ The implemented Phase 2 build is checked with:
 .\.venv\Scripts\ruff.exe check .
 ```
 
-Latest local result: `415 passed`, `ruff` passed.
+Latest local result: `433 passed`, `ruff` passed.
 
 ## Specs
 

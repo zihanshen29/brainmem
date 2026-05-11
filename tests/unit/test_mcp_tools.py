@@ -127,13 +127,18 @@ def test_brain_capture_writes_laundry_without_autocommit(
 
     monkeypatch.setattr(tools, "_capture", fake_capture)
 
-    result = tools.brain_capture("raw note", brain_root=tmp_path, kind="idea")
+    result = tools.brain_capture(
+        "raw note",
+        brain_root=tmp_path,
+        kind="idea",
+        source_context="unit test",
+    )
 
     assert result["path"] == "laundry/capture.md"
     assert calls == [
         {
             "root": tmp_path,
-            "text": "raw note",
+            "text": "source_agent: mcp\nsource_context: unit test\nsource_channel: stdin\n\nraw note",
             "kind": "idea",
             "source": "stdin",
             "source_ref": None,
@@ -167,6 +172,8 @@ def test_brain_inject_uses_pipeline_contract(
             "mode": "keyword-only",
             "top": tools.DEFAULT_INJECT_TOP,
             "include_snapshot": True,
+            "page_type": None,
+            "include_slugs": [],
         }
     ]
 
@@ -196,6 +203,8 @@ def test_brain_inject_default_budget_matches_pipeline_contract(
             "mode": "keyword-only",
             "top": tools.DEFAULT_INJECT_TOP,
             "include_snapshot": True,
+            "page_type": None,
+            "include_slugs": [],
         }
     ]
 
@@ -217,6 +226,70 @@ def test_brain_inject_can_disable_snapshot(
 
     assert result == {"include_snapshot": False}
     assert calls[0]["include_snapshot"] is False
+
+
+def test_brain_capture_preserves_existing_source_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_capture(root: Path, text: str, **kwargs: object) -> dict[str, object]:
+        calls.append({"root": root, "text": text, **kwargs})
+        return {"path": "laundry/capture.md"}
+
+    monkeypatch.setattr(tools, "_capture", fake_capture)
+
+    text = "source_agent: codex\nsource_context: task\n\nraw note"
+    tools.brain_capture(text, brain_root=tmp_path)
+
+    assert calls[0]["text"] == text
+
+
+def test_brain_capture_does_not_accept_incidental_source_words(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_capture(root: Path, text: str, **kwargs: object) -> dict[str, object]:
+        calls.append({"root": root, "text": text, **kwargs})
+        return {"path": "laundry/capture.md"}
+
+    monkeypatch.setattr(tools, "_capture", fake_capture)
+
+    text = "This note mentions source_agent: and source_context: in the body."
+    tools.brain_capture(text, brain_root=tmp_path, source_context="unit test")
+
+    assert calls[0]["text"].startswith("source_agent: mcp\nsource_context: unit test\n")
+
+
+def test_brain_capture_requires_source_context_without_existing_context() -> None:
+    with pytest.raises(ValueError, match="source_context is required"):
+        tools.brain_capture("raw note")
+
+
+def test_brain_inject_passes_page_type_and_include_slug(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_inject(root: Path, query: str, **kwargs: object) -> dict[str, object]:
+        calls.append({"root": root, "query": query, **kwargs})
+        return {"page_type": kwargs["page_type"], "include_slugs": kwargs["include_slugs"]}
+
+    fake_module = types.SimpleNamespace(inject=fake_inject)
+    monkeypatch.setitem(sys.modules, "brain.pipeline.injection", fake_module)
+
+    result = tools.brain_inject(
+        "task",
+        brain_root=tmp_path,
+        page_type="procedure",
+        include_slug=["deploy"],
+    )
+
+    assert result == {"page_type": "procedure", "include_slugs": ["deploy"]}
 
 
 def test_brain_scratch_append_uses_pipeline_contract(
@@ -425,6 +498,39 @@ def test_brain_recent_events_filters_kind(tmp_path: Path) -> None:
     )
 
     result = tools.brain_recent_events(root, kind="note_appended")
+
+    assert result["count"] == 1
+    assert result["events"][0]["source_ref"] == "first"
+
+
+def test_brain_recent_events_filters_entity_slug(tmp_path: Path) -> None:
+    root = tmp_path / "brain"
+    root.mkdir()
+    events_path = root / "events.jsonl"
+    events_path.write_text(
+        "\n".join(
+            [
+                Event(
+                    id=VALID_ULID,
+                    timestamp=datetime(2026, 4, 28, tzinfo=UTC),
+                    kind=EventKind.NOTE_APPENDED,
+                    source_ref="first",
+                    affected_pages=["alice"],
+                ).model_dump_json(),
+                Event(
+                    id=SECOND_ULID,
+                    timestamp=datetime(2026, 4, 29, tzinfo=UTC),
+                    kind=EventKind.AI_CHAT,
+                    source_ref="second",
+                    affected_pages=["bob"],
+                ).model_dump_json(),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = tools.brain_recent_events(root, entity_slug="alice")
 
     assert result["count"] == 1
     assert result["events"][0]["source_ref"] == "first"

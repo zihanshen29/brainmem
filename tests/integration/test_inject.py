@@ -158,6 +158,33 @@ def test_cli_inject_no_snapshot_omits_snapshot(brain_root: Path) -> None:
     assert "### Alice (`alice`)" in result.stdout
 
 
+def test_cli_inject_type_and_include_slug_options(brain_root: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "inject",
+            "--query",
+            "Alice injection",
+            "--budget",
+            "500",
+            "--type",
+            "entity",
+            "--include-slug",
+            "brain-injection",
+            "--no-snapshot",
+            "--brain-root",
+            str(brain_root),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "brain-injection (pages/projects/brain-injection.md)" in result.stdout
+    assert "alice (pages/entities/alice.md)" in result.stdout
+    assert result.stdout.index("### Brain Injection (`brain-injection`)") < result.stdout.index(
+        "### Alice (`alice`)"
+    )
+
+
 def test_cli_inject_invalid_mode_exits_with_error(brain_root: Path) -> None:
     result = runner.invoke(
         app,

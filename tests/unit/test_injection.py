@@ -121,6 +121,59 @@ def test_inject_no_snapshot_restores_retrieved_page_order(brain_root: Path) -> N
     assert "Snapshot context should be ignored." not in result.content
 
 
+def test_inject_can_render_retrieved_scratch_without_parsing_as_page(brain_root: Path) -> None:
+    working = brain_root / "scratch" / "working.md"
+    working.parent.mkdir(parents=True, exist_ok=True)
+    working.write_text(
+        "## 2026-05-11T00:00:00Z - source: codex\n\nscratch auth handoff marker",
+        encoding="utf-8",
+    )
+
+    result = inject(
+        brain_root,
+        "scratch auth handoff",
+        budget=300,
+        mode="keyword-only",
+        top=3,
+        include_snapshot=False,
+    )
+
+    assert "scratch-working (scratch/working.md)" in result.content
+    assert "scratch auth handoff marker" in result.content
+
+
+def test_inject_filters_retrieval_by_page_type(brain_root: Path) -> None:
+    result = inject(
+        brain_root,
+        "memory injection Alice",
+        budget=300,
+        mode="keyword-only",
+        top=3,
+        include_snapshot=False,
+        page_type=PageType.PROJECT,
+    )
+
+    assert [fragment.slug for fragment in result.fragments] == ["brain-injection"]
+    assert "### Alice (`alice`)" not in result.content
+
+
+def test_inject_force_includes_slugs_before_retrieved_pages(brain_root: Path) -> None:
+    result = inject(
+        brain_root,
+        "Alice",
+        budget=500,
+        mode="keyword-only",
+        top=1,
+        include_snapshot=False,
+        include_slugs=["brain-injection"],
+    )
+
+    assert [fragment.slug for fragment in result.fragments] == ["brain-injection", "alice"]
+    assert result.content.index("### Brain Injection (`brain-injection`)") < result.content.index(
+        "### Alice (`alice`)"
+    )
+
+
 def test_inject_snapshot_participates_in_small_budget_first(brain_root: Path) -> None:
     _write_snapshot(
         brain_root,

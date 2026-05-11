@@ -1,7 +1,7 @@
 import json
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 from brain.models.entity import EntityType
 from brain.models.fact import FactCandidate
@@ -27,6 +27,38 @@ class SignalEntity(BaseModel):
         return value
 
 
+class ProcedureCandidate(BaseModel):
+    """Candidate reusable procedure returned by signal detection."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    suggested_slug: str = Field(
+        ...,
+        min_length=1,
+        validation_alias=AliasChoices("suggested_slug", "slug"),
+    )
+    title: str = Field(..., min_length=1)
+    summary: str = Field(..., min_length=1)
+    steps: list[str] = Field(default_factory=list)
+    source_event: str | None = None
+    source_ref: str | None = None
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("metadata", mode="before")
+    @classmethod
+    def normalize_empty_metadata(cls, value: Any) -> dict[str, Any]:
+        """Treat LLM null metadata as an empty metadata object."""
+        if value is None:
+            return {}
+        return value
+
+    @property
+    def slug(self) -> str:
+        """Compatibility alias for older internal callers."""
+        return self.suggested_slug
+
+
 class SignalExtraction(BaseModel):
     """Structured LLM output for a signal-detection pass."""
 
@@ -34,6 +66,7 @@ class SignalExtraction(BaseModel):
 
     entities: list[SignalEntity]
     facts: list[FactCandidate]
+    procedure_candidates: list[ProcedureCandidate] = Field(default_factory=list)
     timeline_summary: str = Field(..., min_length=1)
     suggested_page_type: PageType | None
 

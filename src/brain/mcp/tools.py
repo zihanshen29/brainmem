@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from importlib import import_module
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,8 @@ from brain.pipeline.review import list_pending as _list_pending
 from brain.pipeline.status import collect_status as _collect_status
 
 DEFAULT_INJECT_TOP = 8
+SOURCE_AGENT_RE = re.compile(r"^source_agent:\s*\S+", re.MULTILINE)
+SOURCE_CONTEXT_RE = re.compile(r"^source_context:\s*\S+", re.MULTILINE)
 
 
 def _root(brain_root: str | Path) -> Path:
@@ -57,12 +60,21 @@ def brain_capture(
     kind: str = "note",
     source: str = "stdin",
     source_ref: str | None = None,
+    source_agent: str = "mcp",
+    source_context: str | None = None,
 ) -> dict[str, Any]:
     """When to call: need to write raw text to durable laundry for later ingest; this does not ingest or call providers."""
+    structured_text = _with_source_context(
+        text,
+        source=source,
+        source_ref=source_ref,
+        source_agent=source_agent,
+        source_context=source_context,
+    )
     return to_jsonable(
         _capture(
             _root(brain_root),
-            text,
+            structured_text,
             kind=kind,
             source=source,
             source_ref=source_ref,
@@ -79,6 +91,8 @@ def brain_inject(
     mode: str = "keyword-only",
     top: int = DEFAULT_INJECT_TOP,
     include_snapshot: bool = True,
+    page_type: str | None = None,
+    include_slug: list[str] | None = None,
 ) -> dict[str, Any]:
     """When to call: need an injection-ready context pack; default keyword-only mode avoids providers unless another mode is requested. The snapshot is a local file fragment from scratch/SNAPSHOT.md."""
     injection = import_module("brain.pipeline.injection")
@@ -91,6 +105,8 @@ def brain_inject(
             mode=mode,
             top=top,
             include_snapshot=include_snapshot,
+            page_type=page_type,
+            include_slugs=include_slug or [],
         )
     )
 
@@ -229,6 +245,7 @@ def brain_recent_events(
     brain_root: str | Path = ".",
     limit: int = 10,
     kind: str | None = None,
+    entity_slug: str | None = None,
 ) -> dict[str, Any]:
     """When to call: need the newest append-only ledger events for local-only context."""
     if limit < 1:
@@ -238,8 +255,48 @@ def brain_recent_events(
     events = list(read_all(paths.events_jsonl))
     if kind is not None:
         events = [event for event in events if event.kind.value == kind]
+    if entity_slug is not None:
+        events = [
+            event
+            for event in events
+            if entity_slug in event.affected_pages
+            or event.metadata.get("entity_id") == entity_slug
+            or event.metadata.get("entity_slug") == entity_slug
+            or event.metadata.get("procedure") == entity_slug
+        ]
     recent = list(reversed(events))[:limit]
     return {"events": to_jsonable(recent), "count": len(recent)}
+
+
+def _with_source_context(
+    text: str,
+    *,
+    source: str,
+    source_ref: str | None,
+    source_agent: str,
+    source_context: str | None,
+) -> str:
+    clean_agent = source_agent.strip()
+    if not clean_agent:
+        raise ValueError("source_agent is required")
+    if _has_source_metadata(text):
+        return text
+    clean_context = (source_context or "").strip()
+    if not clean_context:
+        raise ValueError("source_context is required unless text already includes source context")
+    lines = [
+        f"source_agent: {clean_agent}",
+        f"source_context: {clean_context}",
+        f"source_channel: {source}",
+    ]
+    if source_ref:
+        lines.append(f"source_ref: {source_ref}")
+    return "\n".join(lines) + "\n\n" + text
+
+
+def _has_source_metadata(text: str) -> bool:
+    header = text.split("\n\n", maxsplit=1)[0]
+    return SOURCE_AGENT_RE.search(header) is not None and SOURCE_CONTEXT_RE.search(header) is not None
 
 
 def _display_path(paths: BrainPaths, path: Path) -> str:

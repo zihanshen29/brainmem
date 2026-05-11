@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from brain.exceptions import BrainError
+from brain.models import PageType
 from brain.pages import parse_page
 from brain.paths import BrainPaths
 from brain.pipeline.ask import AskMode, ask
@@ -67,6 +69,8 @@ def inject(
     mode: AskMode | str = "keyword-only",
     top: int = 8,
     include_snapshot: bool = True,
+    page_type: PageType | str | None = None,
+    include_slugs: Sequence[str] | None = None,
     snapshot_path: Path | None = None,
 ) -> InjectionResult:
     """Build a token-bounded context bundle from retrieved Brain pages."""
@@ -81,10 +85,11 @@ def inject(
         raise BrainError(f"unsupported injection format: {output_format}")
 
     paths = BrainPaths(Path(brain_root))
-    retrieval = ask(paths.root, normalized_query, top=top, mode=mode)
+    retrieval = ask(paths.root, normalized_query, top=top, mode=mode, page_type=page_type)
     rendered: list[str] = []
     fragments: list[InjectionFragment] = []
     skipped: list[SkippedFragment] = []
+    emitted_slugs: set[str] = set()
 
     if include_snapshot:
         snapshot_text = _read_snapshot(_resolve_snapshot_path(paths, snapshot_path))
@@ -104,9 +109,52 @@ def inject(
                 skipped=skipped,
                 rendered=rendered,
             )
+            emitted_slugs.add("snapshot")
+
+    for page_path, page in _included_pages(paths, include_slugs or []):
+        if page.frontmatter.slug in emitted_slugs:
+            continue
+        _append_budgeted_fragment(
+            output_format,
+            query=normalized_query,
+            budget=budget,
+            slug=page.frontmatter.slug,
+            title=page.frontmatter.title,
+            relative_path=_relative(paths, page_path),
+            page_type=getattr(page.frontmatter.type, "value", str(page.frontmatter.type)),
+            compiled_truth=page.compiled_truth,
+            timeline=page.timeline,
+            sources=page.sources,
+            fragments=fragments,
+            skipped=skipped,
+            rendered=rendered,
+        )
+        emitted_slugs.add(page.frontmatter.slug)
 
     for summary in retrieval.results:
+        if summary.slug in emitted_slugs:
+            continue
+        if summary.slug in {"scratch-snapshot", "scratch-working"}:
+            _append_budgeted_fragment(
+                output_format,
+                query=normalized_query,
+                budget=budget,
+                slug=summary.slug,
+                title=summary.title,
+                relative_path=summary.relative_path,
+                page_type=str(getattr(summary.page_type, "value", summary.page_type)),
+                compiled_truth=summary.compiled_truth,
+                timeline=summary.recent_timeline,
+                sources=[summary.relative_path],
+                fragments=fragments,
+                skipped=skipped,
+                rendered=rendered,
+            )
+            emitted_slugs.add(summary.slug)
+            continue
         page_path = paths.root / summary.relative_path
+        if not page_path.exists() or not page_path.is_file():
+            continue
         page = parse_page(page_path)
         _append_budgeted_fragment(
             output_format,
@@ -123,6 +171,7 @@ def inject(
             skipped=skipped,
             rendered=rendered,
         )
+        emitted_slugs.add(summary.slug)
 
     content, used_tokens = _render_result(
         output_format,
@@ -180,6 +229,33 @@ def _read_snapshot(path: Path) -> str | None:
         return None
     content = path.read_text(encoding="utf-8").strip()
     return content or None
+
+
+def _included_pages(paths: BrainPaths, slugs: Sequence[str]) -> list[tuple[Path, object]]:
+    wanted = [slug.strip() for slug in slugs if slug.strip()]
+    if not wanted:
+        return []
+    by_slug: dict[str, tuple[Path, object]] = {}
+    if paths.pages_dir.exists():
+        for page_path in sorted(paths.pages_dir.rglob("*.md")):
+            if page_path.name in {"index.md", "log.md"}:
+                continue
+            try:
+                page = parse_page(page_path)
+            except BrainError:
+                continue
+            by_slug[page.frontmatter.slug] = (page_path, page)
+    missing = [slug for slug in wanted if slug not in by_slug]
+    if missing:
+        raise BrainError(f"include slug not found: {', '.join(missing)}")
+    return [by_slug[slug] for slug in wanted]
+
+
+def _relative(paths: BrainPaths, path: Path) -> str:
+    try:
+        return path.relative_to(paths.root).as_posix()
+    except ValueError:
+        return path.as_posix()
 
 
 def _append_budgeted_fragment(

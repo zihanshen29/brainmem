@@ -32,6 +32,7 @@ from brain.models import (
     Page,
     PageType,
 )
+from brain.models.page import SLUG_PATTERN
 from brain.pages import (
     TimelineEntry,
     append_log,
@@ -46,7 +47,12 @@ from brain.pipeline.autolink import extract_backlinks
 from brain.pipeline.conflict import Decision, classify_fact
 from brain.pipeline.reindex import reindex
 from brain.pipeline.resolve import resolve_entity
-from brain.pipeline.signal_detect import SignalEntity, SignalExtraction, detect_signal
+from brain.pipeline.signal_detect import (
+    ProcedureCandidate,
+    SignalEntity,
+    SignalExtraction,
+    detect_signal,
+)
 from brain.pipeline.tier import TierProposal, check_tier_upgrade
 
 Source = Literal["laundry", "events", "all"]
@@ -56,6 +62,7 @@ REVIEW_KINDS = {
     "ingest_error",
     "low_confidence_fact",
     "pending_fact",
+    "procedure_candidate",
     "tier_proposal",
     "new_entity_review",
 }
@@ -390,7 +397,16 @@ def _normalize_extraction_sources(
         )
         for fact in extraction.facts
     ]
-    return extraction.model_copy(update={"facts": facts})
+    procedures = [
+        procedure.model_copy(
+            update={
+                "source_event": item.event.id,
+                "source_ref": item.event.source_ref,
+            }
+        )
+        for procedure in extraction.procedure_candidates
+    ]
+    return extraction.model_copy(update={"facts": facts, "procedure_candidates": procedures})
 
 
 def _apply_extraction(
@@ -441,6 +457,17 @@ def _apply_extraction(
             report=report,
             result=result,
             suggested_page_type=extraction.suggested_page_type,
+        )
+
+    for candidate in extraction.procedure_candidates:
+        _handle_procedure_candidate(
+            paths=paths,
+            config=config,
+            item=item,
+            candidate=candidate,
+            review_writer=review_writer,
+            report=report,
+            result=result,
         )
 
     report.processed += 1
@@ -942,6 +969,67 @@ def _write_ingest_error_review(
         ]
     )
     review_writer.write("ingest_error", body)
+
+
+def _handle_procedure_candidate(
+    paths: BrainPaths,
+    config: Config,
+    item: IngestItem,
+    candidate: ProcedureCandidate,
+    review_writer: ReviewWriter,
+    report: IngestReport,
+    result: ItemResult,
+) -> None:
+    auto_accept = config.ingest.confidence_auto_accept
+    auto_reject = config.ingest.confidence_auto_reject
+
+    if candidate.confidence < auto_reject:
+        return
+    validation_error = _procedure_candidate_error(paths, candidate)
+    if validation_error is not None:
+        _write_procedure_candidate_review(review_writer, candidate, item, reason=validation_error)
+        return
+
+    reason = "candidate"
+    if candidate.confidence < auto_accept:
+        reason = "low_confidence"
+    _write_procedure_candidate_review(review_writer, candidate, item, reason=reason)
+
+
+def _procedure_candidate_error(paths: BrainPaths, candidate: ProcedureCandidate) -> str | None:
+    if not SLUG_PATTERN.fullmatch(candidate.slug):
+        return "invalid_slug"
+    if (paths.procedures_dir / f"{candidate.slug}.md").exists():
+        return "procedure_exists"
+    return None
+
+
+def _write_procedure_candidate_review(
+    review_writer: ReviewWriter,
+    candidate: ProcedureCandidate,
+    item: IngestItem,
+    *,
+    reason: str,
+) -> None:
+    payload = {
+        "candidate": candidate.model_dump(mode="json"),
+        "event": item.event.model_dump(mode="json"),
+        "reason": reason,
+    }
+    body = "\n".join(
+        [
+            "# Procedure candidate",
+            "",
+            f"- reason: {reason}",
+            "",
+            "Review the reusable procedure candidate and create or merge a procedure page manually.",
+            "",
+            "```json",
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            "```",
+        ]
+    )
+    review_writer.write("procedure_candidate", body)
 
 
 def _record_item_success(

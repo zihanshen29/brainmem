@@ -13,7 +13,15 @@ from pydantic import BaseModel, ConfigDict, Field
 from brain.config import EmbeddingConfig, load_config
 from brain.db.connection import sqlite_uri
 from brain.exceptions import BrainError
-from brain.models import EmbeddingChunk, FusedResult, Page, PageType, RetrievalHit
+from brain.models import (
+    EmbeddingChunk,
+    Frontmatter,
+    FusedResult,
+    Page,
+    PageType,
+    ProcedureStatus,
+    RetrievalHit,
+)
 from brain.pages import parse_page
 from brain.pages.timeline import parse_entry
 from brain.paths import BrainPaths
@@ -31,7 +39,7 @@ class AskPageSummary(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    page_type: PageType
+    page_type: PageType | str
     slug: str
     title: str
     relative_path: str
@@ -90,6 +98,7 @@ class _PageCandidate(BaseModel):
     page: Page
     raw_markdown: str
     relative_path: str
+    marker: str = "page"
 
 
 def ask(
@@ -118,7 +127,7 @@ def ask(
     if trace is not None:
         trace.classifier = classifier
 
-    candidates = _load_page_candidates(paths, None)
+    candidates = _load_page_candidates(paths, selected_type)
     query_tokens = _tokens(normalized_query)
     if trace is not None:
         trace.query_tokens = query_tokens
@@ -199,15 +208,10 @@ def ask(
         if conn is not None:
             conn.close()
 
-    if selected_type is not None:
-        candidate_types = {
-            candidate.page.frontmatter.slug: candidate.page.frontmatter.type for candidate in candidates
-        }
-        fused = [
-            item for item in fused if candidate_types.get(item.page_slug) is selected_type
-        ]
-
+    fused = _filter_fused_to_candidates(candidates, fused)
+    fused = _apply_candidate_weights(candidates, fused)
     if trace is not None:
+        _trace_fused(trace, fused)
         trace.effective_mode = effective_mode
         trace.warnings = warnings
 
@@ -388,7 +392,13 @@ def _keyword_hits(
     except ImportError:
         pass
 
-    scored = [(candidate, _score_tokens(query_tokens, _chunk_text_from_candidate(candidate))) for candidate in candidates]
+    scored = [
+        (
+            candidate,
+            _score_tokens(query_tokens, _chunk_text_from_candidate(candidate)),
+        )
+        for candidate in candidates
+    ]
     ranked = sorted(
         [(candidate, score) for candidate, score in scored if score > 0],
         key=lambda item: (-item[1], item[0].relative_path),
@@ -520,6 +530,8 @@ def _summaries_from_fused(
             "final_rank": result.final_rank,
             "paths": {hit.path: hit.rank for hit in result.chunks},
         }
+        if candidate.marker != "page":
+            debug["marker"] = candidate.marker
         summaries.append(
             AskPageSummary(
                 page_type=page.frontmatter.type,
@@ -546,7 +558,7 @@ def _chunks_from_candidates(candidates: list[_PageCandidate]) -> list[EmbeddingC
         EmbeddingChunk(
             page_slug=candidate.page.frontmatter.slug,
             chunk_kind="compiled_truth",
-            chunk_id="main",
+            chunk_id="scratch/SNAPSHOT.md" if candidate.marker == "scratch/snapshot" else "main",
             text=_chunk_text_from_candidate(candidate),
             text_preview=candidate.page.compiled_truth[:SUMMARY_LIMIT],
         )
@@ -590,6 +602,34 @@ def _trace_fused(trace: AskModeTrace | None, fused: list[FusedResult]) -> None:
     ]
 
 
+def _apply_candidate_weights(
+    candidates: list[_PageCandidate],
+    fused: list[FusedResult],
+) -> list[FusedResult]:
+    weights = {
+        candidate.page.frontmatter.slug: _candidate_weight(candidate)
+        for candidate in candidates
+    }
+    adjusted = [
+        result.model_copy(update={"rrf_score": result.rrf_score * weights.get(result.page_slug, 1.0)})
+        for result in fused
+    ]
+    adjusted.sort(key=lambda result: (-result.rrf_score, result.page_slug))
+    for index, result in enumerate(adjusted, start=1):
+        result.final_rank = index
+    return adjusted
+
+
+def _filter_fused_to_candidates(
+    candidates: list[_PageCandidate],
+    fused: list[FusedResult],
+) -> list[FusedResult]:
+    candidate_slugs = {candidate.page.frontmatter.slug for candidate in candidates}
+    if not candidate_slugs:
+        return []
+    return [result for result in fused if result.page_slug in candidate_slugs]
+
+
 def _vector_path_available(conn: sqlite3.Connection | None) -> bool:
     if conn is None:
         return False
@@ -609,7 +649,7 @@ def _load_page_candidates(
     page_type: PageType | None,
 ) -> list[_PageCandidate]:
     if not paths.pages_dir.exists():
-        return []
+        return _load_scratch_candidates(paths, page_type)
 
     candidates: list[_PageCandidate] = []
     for page_path in sorted(paths.pages_dir.rglob("*.md")):
@@ -627,7 +667,96 @@ def _load_page_candidates(
                     relative_path=_relative(paths, page_path),
                 )
             )
+    candidates.extend(_load_scratch_candidates(paths, page_type))
     return candidates
+
+
+def _load_scratch_candidates(
+    paths: BrainPaths,
+    page_type: PageType | None,
+) -> list[_PageCandidate]:
+    return [
+        *_load_scratch_file_candidate(
+            paths,
+            path=paths.snapshot_path,
+            slug="scratch-snapshot",
+            title="Scratch Snapshot",
+            source="scratch/SNAPSHOT.md",
+            marker="scratch/snapshot",
+            page_type=page_type,
+        ),
+        *_load_scratch_file_candidate(
+            paths,
+            path=paths.working_buffer,
+            slug="scratch-working",
+            title="Scratch Working Buffer",
+            source="scratch/working.md",
+            marker="scratch/working",
+            page_type=page_type,
+        ),
+    ]
+
+
+def _load_scratch_file_candidate(
+    paths: BrainPaths,
+    *,
+    path: Path,
+    slug: str,
+    title: str,
+    source: str,
+    marker: str,
+    page_type: PageType | None,
+) -> list[_PageCandidate]:
+    if page_type is not None:
+        return []
+    if not path.exists() or not path.is_file():
+        return []
+    content = path.read_text(encoding="utf-8").strip()
+    if not content:
+        return []
+    timestamp = path.stat().st_mtime
+    from datetime import UTC, datetime
+
+    updated = datetime.fromtimestamp(timestamp, tz=UTC)
+    page = Page(
+        frontmatter=Frontmatter(
+            type=PageType.CONCEPT,
+            slug=slug,
+            title=title,
+            created=updated,
+            updated=updated,
+            tags=["scratch", "snapshot"],
+            aliases=[title],
+            external_ids={},
+        ),
+        compiled_truth=content,
+        timeline=[],
+        sources=[source],
+    )
+    return [
+        _PageCandidate(
+            path=path,
+            page=page,
+            raw_markdown=content,
+            relative_path=_relative(paths, path),
+            marker=marker,
+        )
+    ]
+
+
+def _candidate_weight(candidate: _PageCandidate) -> float:
+    if candidate.marker == "scratch/snapshot":
+        return 0.35
+    if candidate.marker == "scratch/working":
+        return 0.25
+    frontmatter = candidate.page.frontmatter
+    if frontmatter.type is not PageType.PROCEDURE:
+        return 1.0
+    if frontmatter.status is ProcedureStatus.STABLE:
+        return 1.0
+    if frontmatter.status is ProcedureStatus.TESTED:
+        return 0.7
+    return 0.3
 
 
 def _score_tokens(query_tokens: list[str], text: str) -> float:

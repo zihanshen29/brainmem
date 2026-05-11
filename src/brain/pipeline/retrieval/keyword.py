@@ -15,6 +15,7 @@ def bm25_search(
     chunks: Sequence[EmbeddingChunk],
     query: str,
     top: int = 50,
+    weights: dict[str, float] | None = None,
 ) -> list[RetrievalHit]:
     """Rank full chunk text with BM25 and return retrieval hits."""
     if top <= 0 or not chunks:
@@ -28,7 +29,12 @@ def bm25_search(
     scores = _bm25_scores(corpus, query_tokens)
     query_unique = set(query_tokens)
     ranked = [
-        (chunk, float(score), len(query_unique & set(corpus[index])), index)
+        (
+            chunk,
+            float(score) * (weights or {}).get(chunk.page_slug, 1.0),
+            len(query_unique & set(corpus[index])),
+            index,
+        )
         for index, (chunk, score) in enumerate(zip(chunks, scores, strict=True))
         if score > 0
     ]

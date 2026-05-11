@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from brain.llm import client as llm_client
 from brain.models import EntityType, FactObjectType, PageType
 from brain.pipeline import SignalExtraction, detect_signal
-from brain.pipeline.signal_detect import SignalEntity
+from brain.pipeline.signal_detect import ProcedureCandidate, SignalEntity
 
 
 def install_fake_llm(monkeypatch: pytest.MonkeyPatch, extract_signal) -> None:
@@ -36,6 +36,18 @@ def extraction_payload() -> dict[str, Any]:
                 "confidence": 0.88,
             }
         ],
+        "procedure_candidates": [
+            {
+                "suggested_slug": "daily-review",
+                "title": "Daily Review",
+                "summary": "Review open memory items each day.",
+                "steps": ["List pending review items.", "Resolve actionable items."],
+                "source_event": "01KQA8R9KVCG906A0203VYEQF7",
+                "source_ref": "laundry/alice.md",
+                "confidence": 0.86,
+                "metadata": {"origin": "note"},
+            }
+        ],
         "timeline_summary": "Alice started working on Brain.",
         "suggested_page_type": "project",
     }
@@ -58,6 +70,8 @@ def test_detect_signal_returns_round_trippable_extraction(
     assert isinstance(result, SignalExtraction)
     assert result.entities[0].type is EntityType.PERSON
     assert result.facts[0].object_type is FactObjectType.ENTITY
+    assert result.procedure_candidates[0].suggested_slug == "daily-review"
+    assert result.procedure_candidates[0].slug == "daily-review"
     assert result.suggested_page_type is PageType.PROJECT
     assert SignalExtraction.model_validate(result.model_dump()) == result
 
@@ -110,3 +124,15 @@ def test_signal_entity_normalizes_null_metadata() -> None:
     )
 
     assert entity.metadata == {}
+
+
+def test_procedure_candidate_normalizes_null_metadata() -> None:
+    candidate = ProcedureCandidate(
+        suggested_slug="daily-review",
+        title="Daily Review",
+        summary="Review memory items.",
+        confidence=0.93,
+        metadata=None,
+    )
+
+    assert candidate.metadata == {}

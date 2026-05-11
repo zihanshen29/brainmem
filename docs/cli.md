@@ -59,6 +59,7 @@ mem ask "<query>" [--mode hybrid|keyword-only|semantic|sql] [--top N] [--type <t
 ```
 mem inject --query "<query>" [--budget N] [--format markdown|text]
            [--mode keyword-only|hybrid|semantic|sql] [--top N]
+           [--type <page-type>] [--include-slug <slug> ...]
            [--snapshot|--no-snapshot]
 ```
 

@@ -28,6 +28,7 @@ from brain.models import (
     Frontmatter,
     Page,
     PageType,
+    ProcedureStatus,
     Tier,
 )
 from brain.pages import parse_page, write_page
@@ -276,6 +277,32 @@ def test_apply_new_entity_then_pending_fact_adds_fact_and_page(brain_root: Path)
     assert page.frontmatter.type is PageType.ENTITY
     assert _archived_review(brain_root, "2026-04-28_001_new_entity_review.md").exists()
     assert _archived_review(brain_root, "2026-04-28_002_pending_fact.md").exists()
+
+
+@requires_review_pipeline
+def test_apply_procedure_candidate_creates_raw_procedure(brain_root: Path) -> None:
+    _write_review(
+        brain_root,
+        "2026-04-28_001_procedure_candidate",
+        "procedure_candidate",
+        _procedure_candidate_body(),
+        checked="approve",
+    )
+
+    report = apply_pending(brain_root)
+
+    page = parse_page(brain_root / "pages" / "procedures" / "daily-review.md")
+    assert report.applied == 1
+    assert report.reports[0].entity_id == "daily-review"
+    assert report.reports[0].pages_touched == ["pages/procedures/daily-review.md"]
+    assert page.frontmatter.type is PageType.PROCEDURE
+    assert page.frontmatter.status is ProcedureStatus.RAW
+    assert page.frontmatter.success_count == 0
+    assert page.frontmatter.fail_count == 0
+    assert "Review pending memory work each day." in page.compiled_truth
+    assert "1. List pending review items." in page.compiled_truth
+    assert "Procedure candidate approved" in page.timeline[0]
+    assert _archived_review(brain_root, "2026-04-28_001_procedure_candidate.md").exists()
 
 
 @requires_review_pipeline
@@ -660,6 +687,43 @@ def _pending_fact_body(candidate: FactCandidate) -> str:
     return "\n".join(
         [
             "# Pending fact",
+            "",
+            "```json",
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            "```",
+        ]
+    )
+
+
+def _procedure_candidate_body() -> str:
+    payload = {
+        "candidate": {
+            "suggested_slug": "daily-review",
+            "title": "Daily Review",
+            "summary": "Review pending memory work each day.",
+            "steps": ["List pending review items.", "Resolve actionable items."],
+            "source_event": SECOND_ULID,
+            "source_ref": "laundry/procedure.md",
+            "confidence": 0.74,
+            "metadata": {},
+        },
+        "event": {
+            "id": SECOND_ULID,
+            "timestamp": "2026-04-28T12:00:00Z",
+            "kind": "laundry_ingested",
+            "source_ref": "laundry/procedure.md",
+            "raw_payload": "Procedure: daily review.",
+            "raw_payload_path": None,
+            "extracted_facts": [],
+            "affected_pages": [],
+            "confidence": 1.0,
+            "metadata": {},
+        },
+        "reason": "low_confidence",
+    }
+    return "\n".join(
+        [
+            "# Procedure candidate",
             "",
             "```json",
             json.dumps(payload, ensure_ascii=False, indent=2),

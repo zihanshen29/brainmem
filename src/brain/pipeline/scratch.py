@@ -7,6 +7,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from brain.exceptions import BrainError
+from brain.ledger.reader import read_all
 from brain.paths import BrainPaths
 
 ENTRY_HEADER_RE = re.compile(r"^## (?P<timestamp>\S+) - source: (?P<source>.+)$")
@@ -105,6 +106,7 @@ def rebuild_snapshot(
         timestamp=_format_timestamp(timestamp),
         max_items=max_items,
         max_chars=max_chars,
+        procedure_runs=_recent_procedure_runs(paths),
     )
 
     path = paths.snapshot_path
@@ -136,6 +138,7 @@ def _render_snapshot(
     timestamp: str,
     max_items: int,
     max_chars: int,
+    procedure_runs: list[str] | None = None,
 ) -> str:
     lines = [
         f"# {title.strip() or 'Scratch Snapshot'}",
@@ -155,7 +158,29 @@ def _render_snapshot(
                 "",
             ]
         )
+    if procedure_runs:
+        lines.extend(["## Recent procedure runs", ""])
+        lines.extend(f"- {run}" for run in procedure_runs)
+        lines.append("")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _recent_procedure_runs(paths: BrainPaths, limit: int = 5) -> list[str]:
+    if not paths.events_jsonl.exists():
+        return []
+    runs: list[str] = []
+    for event in reversed(list(read_all(paths.events_jsonl))):
+        if event.metadata.get("operation") != "run":
+            continue
+        procedure = event.metadata.get("procedure")
+        result = event.metadata.get("result")
+        if not procedure or not result:
+            continue
+        note = (event.raw_payload or "").strip()
+        runs.append(f"{event.timestamp.date().isoformat()} {procedure} {result}: {note}")
+        if len(runs) >= limit:
+            break
+    return runs
 
 
 def _parse_working_entries(text: str) -> list[ScratchEntry]:

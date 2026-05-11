@@ -30,7 +30,7 @@ from brain.models import (
 )
 from brain.pages import parse_page
 from brain.pipeline import signal_detect
-from brain.pipeline.signal_detect import SignalEntity, SignalExtraction
+from brain.pipeline.signal_detect import ProcedureCandidate, SignalEntity, SignalExtraction
 
 VALID_ULID = "01KQA8R9KVCG906A0203VYEQF7"
 SECOND_ULID = "01KQA8VZMXBAV7AKF5JFB4KQ9C"
@@ -130,6 +130,59 @@ def test_project_entity_uses_project_page_directory(
     assert page.frontmatter.type is PageType.PROJECT
     assert page.frontmatter.tier is None
     assert not (brain_root / "pages" / "entities" / "brain-project.md").exists()
+
+
+def test_high_confidence_procedure_candidate_creates_review(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    laundry_path = _write_laundry(
+        brain_root,
+        "Procedure: run daily review by listing pending items and resolving them.",
+    )
+    _install_signal_detector(monkeypatch, lambda: _procedure_extraction(confidence=0.91))
+
+    report = _run_ingest(brain_root, source="laundry")
+
+    review_files = list((brain_root / "review").glob("*.md"))
+    assert report.processed == 1
+    assert report.facts_added == 0
+    assert report.review_items_created == 1
+    assert report.laundry_archived == 1
+    assert len(review_files) == 1
+    assert not (brain_root / "pages" / "procedures" / "daily-review.md").exists()
+    review_text = review_files[0].read_text(encoding="utf-8")
+    assert "kind: procedure_candidate" in review_text
+    assert "- reason: candidate" in review_text
+    assert '"suggested_slug": "daily-review"' in review_text
+    assert not laundry_path.exists()
+
+
+def test_low_confidence_procedure_candidate_creates_review(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_laundry(
+        brain_root,
+        "Possible procedure: run daily review by checking pending items.",
+    )
+    _install_signal_detector(monkeypatch, lambda: _procedure_extraction(confidence=0.5))
+
+    report = _run_ingest(brain_root, source="laundry")
+
+    review_files = list((brain_root / "review").glob("*.md"))
+    assert report.processed == 1
+    assert report.facts_added == 0
+    assert report.review_items_created == 1
+    assert len(review_files) == 1
+    assert not (brain_root / "pages" / "procedures" / "daily-review.md").exists()
+
+    review_text = review_files[0].read_text(encoding="utf-8")
+    assert "kind: procedure_candidate" in review_text
+    assert "# Procedure candidate" in review_text
+    assert "- reason: low_confidence" in review_text
+    assert '"suggested_slug": "daily-review"' in review_text
+    assert "## Decision" in review_text
 
 
 def test_unresolved_entity_fact_becomes_pending_fact_review(
@@ -541,6 +594,30 @@ def _alice_extraction(
         ],
         timeline_summary=summary,
         suggested_page_type=PageType.ENTITY,
+    )
+
+
+def _procedure_extraction(*, confidence: float) -> SignalExtraction:
+    return SignalExtraction(
+        entities=[],
+        facts=[],
+        procedure_candidates=[
+            ProcedureCandidate(
+                suggested_slug="daily-review",
+                title="Daily Review",
+                summary="Review pending memory work each day.",
+                steps=[
+                    "List pending review items.",
+                    "Resolve actionable items.",
+                ],
+                source_event=SECOND_ULID,
+                source_ref="laundry/alice.md",
+                confidence=confidence,
+                metadata={},
+            )
+        ],
+        timeline_summary="A daily review procedure was described.",
+        suggested_page_type=None,
     )
 
 

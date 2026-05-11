@@ -32,11 +32,15 @@ from brain.models import (
     EventKind,
     Fact,
     FactCandidate,
+    Frontmatter,
+    Page,
     PageType,
+    ProcedureStatus,
     Tier,
 )
+from brain.models.page import SLUG_PATTERN
 from brain.pages import parse_page, write_page
-from brain.pages.timeline import parse_entry
+from brain.pages.timeline import TimelineEntry, format_entry, parse_entry
 from brain.paths import BrainPaths
 
 
@@ -47,6 +51,7 @@ class ReviewKind(StrEnum):
     INGEST_ERROR = "ingest_error"
     LOW_CONFIDENCE_FACT = "low_confidence_fact"
     PENDING_FACT = "pending_fact"
+    PROCEDURE_CANDIDATE = "procedure_candidate"
     TIER_PROPOSAL = "tier_proposal"
     LINT_FINDING = "lint_finding"
     NEW_ENTITY_REVIEW = "new_entity_review"
@@ -196,8 +201,18 @@ def parse_review_file(path: Path) -> ReviewDecision:
     kind = _coerce_kind(metadata.get("kind") or _kind_from_review_id(review_id))
     action, action_errors = _selected_action(content)
     data, data_errors = _extract_review_data(kind, content)
-    candidate, candidate_errors = _candidate_from_data(data)
-    active_facts, fact_errors = _active_facts_from_data(data)
+    if kind in {
+        ReviewKind.FACT_CONFLICT,
+        ReviewKind.LOW_CONFIDENCE_FACT,
+        ReviewKind.PENDING_FACT,
+    }:
+        candidate, candidate_errors = _candidate_from_data(data)
+        active_facts, fact_errors = _active_facts_from_data(data)
+    else:
+        candidate = None
+        active_facts = []
+        candidate_errors = []
+        fact_errors = []
 
     return ReviewDecision(
         review_id=review_id,
@@ -318,6 +333,8 @@ def apply_decision(conn: sqlite3.Connection, decision: ReviewDecision) -> Review
         return _approve_tier_proposal(conn, paths, decision, report)
     if decision.kind is ReviewKind.NEW_ENTITY_REVIEW:
         return _approve_new_entity_review(conn, paths, decision, report)
+    if decision.kind is ReviewKind.PROCEDURE_CANDIDATE:
+        return _approve_procedure_candidate(conn, paths, decision, report)
 
     report.errors.append(f"Approve is not implemented for review kind: {decision.kind.value}")
     report.skipped = True
@@ -544,6 +561,85 @@ def _approve_new_entity_review(
     return report
 
 
+def _approve_procedure_candidate(
+    conn: sqlite3.Connection,
+    paths: BrainPaths,
+    decision: ReviewDecision,
+    report: ReviewApplyReport,
+) -> ReviewApplyReport:
+    candidate = decision.data.get("candidate")
+    if not isinstance(candidate, dict):
+        report.errors.append("Procedure candidate review is missing candidate payload")
+        report.skipped = True
+        return report
+
+    slug = str(candidate.get("suggested_slug") or candidate.get("slug") or "").strip()
+    title = str(candidate.get("title") or "").strip()
+    summary = str(candidate.get("summary") or "").strip()
+    if not SLUG_PATTERN.fullmatch(slug):
+        report.errors.append(f"Invalid procedure slug: {slug}")
+        report.skipped = True
+        return report
+    if not title or not summary:
+        report.errors.append("Procedure candidate requires title and summary")
+        report.skipped = True
+        return report
+
+    path = paths.procedures_dir / f"{slug}.md"
+    if path.exists():
+        report.errors.append(f"Procedure already exists: {slug}")
+        report.skipped = True
+        return report
+
+    event = _procedure_candidate_event(decision)
+    steps = [str(step).strip() for step in candidate.get("steps", []) if str(step).strip()]
+    now = _now_utc()
+    page = Page(
+        frontmatter=Frontmatter(
+            type=PageType.PROCEDURE,
+            slug=slug,
+            title=title,
+            created=now,
+            updated=now,
+            tags=[],
+            aliases=[],
+            external_ids={},
+            status=ProcedureStatus.RAW,
+            success_count=0,
+            fail_count=0,
+        ),
+        compiled_truth=_procedure_candidate_truth(summary, steps),
+        timeline=[
+            format_entry(
+                TimelineEntry(
+                    date=event.timestamp.date().isoformat(),
+                    event_id=event.id,
+                    description=f"Procedure candidate approved from {event.source_ref}.",
+                )
+            )
+        ],
+        sources=[event.source_ref],
+    )
+    write_page(path, page)
+    report.entity_id = slug
+    report.pages_touched.append(path.relative_to(paths.root).as_posix())
+
+    with conn:
+        _record_review_event(paths, decision, "approved", report)
+
+    from brain.pages import append_log, regenerate_index
+
+    regenerate_index(paths.root)
+    append_log(
+        paths.root,
+        f"- {_now_utc().strftime('%Y-%m-%d %H:%M')} review: created procedure {slug}",
+    )
+
+    report.archived_path = _mark_and_archive(decision.path, ReviewStatus.APPROVED, decision.action)
+    report.applied = True
+    return report
+
+
 def _approve_tier_proposal(
     conn: sqlite3.Connection,
     paths: BrainPaths,
@@ -735,6 +831,8 @@ def _extract_review_data(kind: ReviewKind, content: str) -> tuple[dict[str, Any]
             data.update(pending_payload)
     elif kind is ReviewKind.TIER_PROPOSAL:
         data.update(_tier_json(json_values))
+    elif kind is ReviewKind.PROCEDURE_CANDIDATE:
+        data.update(_procedure_candidate_json(json_values))
 
     return data, errors
 
@@ -803,6 +901,21 @@ def _tier_json(values: list[Any]) -> dict[str, Any]:
     return {}
 
 
+def _procedure_candidate_json(values: list[Any]) -> dict[str, Any]:
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        candidate = value.get("candidate")
+        if isinstance(candidate, dict):
+            payload: dict[str, Any] = {"candidate": dict(candidate)}
+            if isinstance(value.get("event"), dict):
+                payload["event"] = value["event"]
+            return payload
+        if {"suggested_slug", "title", "summary"}.issubset(value):
+            return {"candidate": dict(value)}
+    return {}
+
+
 def _pending_payload_json(values: list[Any]) -> dict[str, Any] | None:
     for value in values:
         if not isinstance(value, dict):
@@ -819,6 +932,34 @@ def _pending_payload_json(values: list[Any]) -> dict[str, Any] | None:
         if payload:
             return payload
     return None
+
+
+def _procedure_candidate_event(decision: ReviewDecision) -> Event:
+    value = decision.data.get("event")
+    if isinstance(value, dict):
+        try:
+            return Event.model_validate(value)
+        except ValidationError:
+            pass
+    return Event(
+        id=str(ulid.ULID()),
+        timestamp=_now_utc(),
+        kind=EventKind.REVIEW_DECIDED,
+        source_ref=_review_source_ref(BrainPaths(_infer_brain_root(decision.path)), decision.path),
+    )
+
+
+def _procedure_candidate_truth(summary: str, steps: list[str]) -> str:
+    if not steps:
+        return summary
+    return "\n".join(
+        [
+            summary,
+            "",
+            "Steps:",
+            *[f"{index}. {step}" for index, step in enumerate(steps, start=1)],
+        ]
+    )
 
 
 def _looks_like_candidate(value: dict[str, Any]) -> bool:
