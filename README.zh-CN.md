@@ -11,7 +11,7 @@
 <p align="center">
   <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-3776AB">
   <img alt="CLI mem" src="https://img.shields.io/badge/CLI-mem-111827">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-433%20passed-16A34A">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-438%20passed-16A34A">
   <img alt="Local first" src="https://img.shields.io/badge/local--first-Markdown%20%2B%20SQLite-0F766E">
 </p>
 
@@ -165,7 +165,7 @@ brain-root/            本地运行数据，不要发布到 GitHub
 .\.venv\Scripts\ruff.exe check .
 ```
 
-最新本地结果：`433 passed`，`ruff` passed。
+最新本地结果：`438 passed`，`ruff` passed。
 
 ## 文档
 

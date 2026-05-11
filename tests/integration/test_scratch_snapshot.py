@@ -60,12 +60,45 @@ def test_cli_snapshot_rebuild_generates_snapshot_from_working(brain_root: Path) 
     assert result.exit_code == 0
     assert "Snapshot rebuild summary:" in result.stdout
     assert "path=scratch/SNAPSHOT.md" in result.stdout
+    assert "strategy=dedup" in result.stdout
     assert "items=1" in result.stdout
     assert "chars=12" in result.stdout
     snapshot = (brain_root / "scratch" / "SNAPSHOT.md").read_text(encoding="utf-8")
     assert "Entries: 1" in snapshot
+    assert "Strategy: dedup-by-source" in snapshot
     assert "source: codex" in snapshot
     assert "first\nsecond" in snapshot
+
+
+def test_cli_snapshot_rebuild_supports_recent_strategy(brain_root: Path) -> None:
+    for note in ["first", "second"]:
+        append_result = runner.invoke(
+            app,
+            ["scratch", "append", "--brain-root", str(brain_root), "--stdin", "--source", "codex"],
+            input=f"{note}\n",
+        )
+        assert append_result.exit_code == 0
+
+    result = runner.invoke(
+        app,
+        [
+            "snapshot",
+            "rebuild",
+            "--brain-root",
+            str(brain_root),
+            "--strategy",
+            "recent",
+            "--max-items",
+            "2",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "strategy=recent" in result.stdout
+    snapshot = (brain_root / "scratch" / "SNAPSHOT.md").read_text(encoding="utf-8")
+    assert "Strategy: recent-items" in snapshot
+    assert "first" in snapshot
+    assert "second" in snapshot
 
 
 def test_cli_scratch_append_empty_stdin_reports_error(brain_root: Path) -> None:

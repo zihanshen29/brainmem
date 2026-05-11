@@ -9,6 +9,7 @@ from brain.exceptions import BrainError
 
 DEFAULT_MAX_ITEMS = 20
 DEFAULT_MAX_CHARS = 8000
+DEFAULT_STRATEGY = "dedup"
 
 snapshot_app = typer.Typer(
     add_completion=False,
@@ -38,10 +39,22 @@ def rebuild_command(
             help="Maximum snapshot characters. Local-only deterministic; no provider call.",
         ),
     ] = DEFAULT_MAX_CHARS,
+    strategy: Annotated[
+        str,
+        typer.Option(
+            "--strategy",
+            help="Snapshot strategy: dedup keeps the latest item per source; recent keeps newest items.",
+        ),
+    ] = DEFAULT_STRATEGY,
 ) -> None:
     """Rebuild SNAPSHOT locally and deterministically without provider use."""
     try:
-        report = _run_rebuild(_root(brain_root), max_items=max_items, max_chars=max_chars)
+        report = _run_rebuild(
+            _root(brain_root),
+            max_items=max_items,
+            max_chars=max_chars,
+            strategy=strategy,
+        )
     except BrainError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -53,10 +66,21 @@ def _root(brain_root: Path | None) -> Path:
     return Path.cwd() if brain_root is None else brain_root
 
 
-def _run_rebuild(brain_root: Path, *, max_items: int, max_chars: int) -> Any:
+def _run_rebuild(
+    brain_root: Path,
+    *,
+    max_items: int,
+    max_chars: int,
+    strategy: str,
+) -> Any:
     from brain.pipeline.scratch import rebuild_snapshot
 
-    return rebuild_snapshot(brain_root, max_items=max_items, max_chars=max_chars)
+    return rebuild_snapshot(
+        brain_root,
+        max_items=max_items,
+        max_chars=max_chars,
+        strategy=strategy,
+    )
 
 
 def _summary(report: Any) -> str:
@@ -64,6 +88,7 @@ def _summary(report: Any) -> str:
     return (
         "Snapshot rebuild summary: "
         f"path={path} "
+        f"strategy={_value(report, 'strategy', default='dedup')} "
         f"items={_value(report, 'entries', default=0)} "
         f"chars={_value(report, 'char_count', default=0)}"
     )

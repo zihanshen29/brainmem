@@ -60,23 +60,47 @@ def test_rebuild_snapshot_requires_working_buffer(tmp_path: Path) -> None:
         rebuild_snapshot(tmp_path, timestamp="2026-05-10T12:00:00Z")
 
 
-def test_rebuild_snapshot_uses_recent_items(tmp_path: Path) -> None:
+def test_rebuild_snapshot_uses_recent_items_strategy(tmp_path: Path) -> None:
     append_working(tmp_path, "one", timestamp="2026-05-10T12:00:00Z")
     append_working(tmp_path, "two", timestamp="2026-05-10T12:01:00Z")
     append_working(tmp_path, "three", timestamp="2026-05-10T12:02:00Z")
 
-    report = rebuild_snapshot(tmp_path, max_items=2, timestamp="2026-05-10T12:03:00Z")
+    report = rebuild_snapshot(
+        tmp_path,
+        max_items=2,
+        strategy="recent",
+        timestamp="2026-05-10T12:03:00Z",
+    )
 
     snapshot = (tmp_path / report.path).read_text(encoding="utf-8")
     assert report.path == "scratch/SNAPSHOT.md"
     assert report.entries == 2
+    assert report.strategy == "recent"
     assert report.created is True
     assert report.updated is True
     assert "Generated: 2026-05-10T12:03:00Z" in snapshot
+    assert "Strategy: recent-items" in snapshot
     assert "one" not in snapshot
     assert "two" in snapshot
     assert "three" in snapshot
     assert snapshot.index("two") < snapshot.index("three")
+
+
+def test_rebuild_snapshot_defaults_to_dedup_by_source(tmp_path: Path) -> None:
+    append_working(tmp_path, "codex older", source="codex", timestamp="2026-05-10T12:00:00Z")
+    append_working(tmp_path, "manual only", source="manual", timestamp="2026-05-10T12:01:00Z")
+    append_working(tmp_path, "codex latest", source="codex", timestamp="2026-05-10T12:02:00Z")
+
+    report = rebuild_snapshot(tmp_path, max_items=10, timestamp="2026-05-10T12:03:00Z")
+
+    snapshot = (tmp_path / report.path).read_text(encoding="utf-8")
+    assert report.entries == 2
+    assert report.strategy == "dedup"
+    assert "Strategy: dedup-by-source" in snapshot
+    assert "codex older" not in snapshot
+    assert "codex latest" in snapshot
+    assert "manual only" in snapshot
+    assert "(+1 earlier entries from source: codex)" in snapshot
 
 
 def test_rebuild_snapshot_respects_max_chars(tmp_path: Path) -> None:
@@ -84,7 +108,13 @@ def test_rebuild_snapshot_respects_max_chars(tmp_path: Path) -> None:
     append_working(tmp_path, "abcdef", timestamp="2026-05-10T12:01:00Z")
     append_working(tmp_path, "xyz", timestamp="2026-05-10T12:02:00Z")
 
-    report = rebuild_snapshot(tmp_path, max_items=10, max_chars=9, timestamp="2026-05-10T12:03:00Z")
+    report = rebuild_snapshot(
+        tmp_path,
+        max_items=10,
+        max_chars=9,
+        strategy="recent",
+        timestamp="2026-05-10T12:03:00Z",
+    )
 
     snapshot = (tmp_path / "scratch" / "SNAPSHOT.md").read_text(encoding="utf-8")
     assert report.entries == 2

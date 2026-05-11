@@ -56,14 +56,15 @@ def brain_ask(
 
 def brain_capture(
     text: str,
+    *,
+    source_agent: str,
     brain_root: str | Path = ".",
     kind: str = "note",
     source: str = "stdin",
     source_ref: str | None = None,
-    source_agent: str = "mcp",
     source_context: str | None = None,
 ) -> dict[str, Any]:
-    """When to call: need to write raw text to durable laundry for later ingest; this does not ingest or call providers."""
+    """When to call: need to write raw text to durable laundry for later ingest; this does not ingest or call providers. Pass the caller identity as source_agent."""
     structured_text = _with_source_context(
         text,
         source=source,
@@ -131,14 +132,16 @@ def brain_snapshot_rebuild(
     brain_root: str | Path = ".",
     max_items: int = 20,
     max_chars: int = 8000,
+    strategy: str = "dedup",
 ) -> dict[str, Any]:
-    """When to call: need to rebuild the local scratch/SNAPSHOT.md current-state fragment before injection."""
+    """When to call: need to rebuild the local scratch/SNAPSHOT.md current-state fragment before injection; dedup is the default local strategy."""
     scratch = import_module("brain.pipeline.scratch")
     return to_jsonable(
         scratch.rebuild_snapshot(
             _root(brain_root),
             max_items=max_items,
             max_chars=max_chars,
+            strategy=strategy,
         )
     )
 
@@ -276,11 +279,11 @@ def _with_source_context(
     source_agent: str,
     source_context: str | None,
 ) -> str:
-    clean_agent = source_agent.strip()
-    if not clean_agent:
-        raise ValueError("source_agent is required")
     if _has_source_metadata(text):
         return text
+    clean_agent = (source_agent or "").strip()
+    if not clean_agent:
+        raise ValueError("source_agent is required unless text already includes source context")
     clean_context = (source_context or "").strip()
     if not clean_context:
         raise ValueError("source_context is required unless text already includes source context")

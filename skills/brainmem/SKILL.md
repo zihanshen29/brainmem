@@ -44,6 +44,10 @@ decisions, prior failures, deployments, and procedures. Do not query memory
 when the answer should come from current files, logs, tests, or the active
 conversation.
 
+`mem ask` and `mem inject` also surface `scratch/working.md` entries and
+`scratch/SNAPSHOT.md` content at low weight, so cross-session working state is
+searchable before it is promoted into durable wiki truth.
+
 ### Step 3 - Information Solidification
 
 Capture only information the user asks to remember or clearly intends to
@@ -186,6 +190,7 @@ label privacy/write behavior.
 | Distill current state | `mem snapshot rebuild` | Local deterministic snapshot from scratch. |
 | Procedure runbook | `mem procedure new/run/promote` | Manual procedure SOP with maturity state. |
 | Recall procedure | `mem ask --type procedure --mode keyword-only` | Find reusable runbooks before risky work. |
+| Review procedure candidates | `mem review --brain-root "${BRAIN_ROOT}" --kind procedure_candidate` | After ingest, reusable workflow candidates need explicit user approval before becoming procedure pages. |
 | Cost planning | `mem cost-estimate` | Local-only estimate before import/ingest. |
 | Ingest | `mem ingest` | Provider-backed extraction/write pipeline; requires permission. |
 | Reindex | `mem reindex` | Embedding provider call; requires permission. |
@@ -201,6 +206,7 @@ mem ask "query" --brain-root "${BRAIN_ROOT}" --mode keyword-only --top 5
 mem inject --query "query" --brain-root "${BRAIN_ROOT}" --mode keyword-only
 printf '%s\n' '<working note>' | mem scratch append --brain-root "${BRAIN_ROOT}" --stdin --source codex
 mem snapshot rebuild --brain-root "${BRAIN_ROOT}"
+mem review --brain-root "${BRAIN_ROOT}" --kind procedure_candidate
 mem procedure run deploy-staging --brain-root "${BRAIN_ROOT}" --result success --note "validated"
 ```
 

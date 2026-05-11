@@ -8,7 +8,7 @@ CLI 入口名为 `mem`。所有命令支持 `--help`。全局选项 `--brain-roo
 # Phase 1
 mem init                       # 初始化空仓库
 mem ingest                     # 处理 laundry + 新事件
-mem review [<id>] [--apply]    # 处理 review 队列
+mem review [<id>] [--brain-root <root>] [--apply] [--kind <kind>]  # 处理 review 队列
 mem lint [--<kind>|--all]      # 执行 lint 检查
 mem promote-chat <event-id>    # 提升 AI 对话为页面
 mem rebuild --<scope>          # 重建派生数据
@@ -87,10 +87,13 @@ mem scratch append --stdin [--source <source>]
 从 scratch working buffer 重建 `scratch/SNAPSHOT.md`。当前实现是确定性的本地摘要，不调用 LLM。
 
 ```
-mem snapshot rebuild [--max-items N] [--max-chars N]
+mem snapshot rebuild [--max-items N] [--max-chars N] [--strategy dedup|recent]
 ```
 
-`mem inject` 默认会读取 snapshot，因此涉及“当前状态”的 agent 查询应先运行 `mem snapshot rebuild`。
+`mem snapshot rebuild` defaults to `--strategy dedup`, which keeps the latest
+scratch entry per source and records how many earlier entries were collapsed.
+Use `--strategy recent` to keep the previous newest-N log behavior. `mem inject`
+默认会读取 snapshot，因此涉及“当前状态”的 agent 查询应先运行 `mem snapshot rebuild`。
 
 ---
 

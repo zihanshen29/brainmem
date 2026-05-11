@@ -306,6 +306,25 @@ def test_apply_procedure_candidate_creates_raw_procedure(brain_root: Path) -> No
 
 
 @requires_review_pipeline
+def test_apply_procedure_candidate_uses_candidate_source_when_event_missing(brain_root: Path) -> None:
+    _write_review(
+        brain_root,
+        "2026-04-28_001_procedure_candidate",
+        "procedure_candidate",
+        _procedure_candidate_body(include_event=False),
+        checked="approve",
+    )
+
+    report = apply_pending(brain_root)
+
+    page = parse_page(brain_root / "pages" / "procedures" / "daily-review.md")
+    assert report.applied == 1
+    assert page.sources == ["laundry/procedure.md"]
+    assert SECOND_ULID in page.timeline[0]
+    assert "Procedure candidate approved from laundry/procedure.md." in page.timeline[0]
+
+
+@requires_review_pipeline
 def test_pending_fact_follow_up_review_is_not_error(
     brain_root: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -481,6 +500,32 @@ def test_cli_review_lists_pending_items_and_filters_kind(
     assert "2026-04-28_001_low_confidence_fact" not in filtered_result.stdout
     assert "2026-04-28_002_fact_conflict" in filtered_result.stdout
     assert calls == [(tmp_path, None), (tmp_path, "fact_conflict")]
+
+
+def test_cli_review_accepts_brain_root_from_other_cwd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    brain_root = tmp_path / "brain"
+    other_cwd = tmp_path / "other"
+    other_cwd.mkdir()
+    calls: list[tuple[Path, str | None]] = []
+
+    def fake_list_pending(root: Path, *, kind: str | None = None) -> list[Any]:
+        calls.append((root, kind))
+        return []
+
+    monkeypatch.setattr(review_cli, "list_pending", fake_list_pending)
+    monkeypatch.chdir(other_cwd)
+
+    result = runner.invoke(
+        app,
+        ["review", "--brain-root", str(brain_root), "--kind", "procedure_candidate"],
+    )
+
+    assert result.exit_code == 0
+    assert "No pending review items." in result.stdout
+    assert calls == [(brain_root, "procedure_candidate")]
 
 
 def test_cli_review_apply_scans_pending_and_passes_kind_filter(
@@ -695,7 +740,7 @@ def _pending_fact_body(candidate: FactCandidate) -> str:
     )
 
 
-def _procedure_candidate_body() -> str:
+def _procedure_candidate_body(*, include_event: bool = True) -> str:
     payload = {
         "candidate": {
             "suggested_slug": "daily-review",
@@ -707,7 +752,10 @@ def _procedure_candidate_body() -> str:
             "confidence": 0.74,
             "metadata": {},
         },
-        "event": {
+        "reason": "low_confidence",
+    }
+    if include_event:
+        payload["event"] = {
             "id": SECOND_ULID,
             "timestamp": "2026-04-28T12:00:00Z",
             "kind": "laundry_ingested",
@@ -718,9 +766,7 @@ def _procedure_candidate_body() -> str:
             "affected_pages": [],
             "confidence": 1.0,
             "metadata": {},
-        },
-        "reason": "low_confidence",
-    }
+        }
     return "\n".join(
         [
             "# Procedure candidate",

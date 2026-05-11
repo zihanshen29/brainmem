@@ -64,6 +64,10 @@ people, teams, customers, long-running tasks, or remembered procedures. Do not
 query for generic API syntax or code facts that should come from the current
 repository.
 
+`mem ask` and `mem inject` also surface `scratch/working.md` entries and
+`scratch/SNAPSHOT.md` content at low weight, so cross-session working state can
+be found through local recall before it becomes durable wiki truth.
+
 ### Step 3 - Information Capture
 
 Capture only durable information the user asks to save or clearly intends to
@@ -166,6 +170,7 @@ CLI operation and preserve the same privacy and consent boundary.
 | Distill current state | `mem snapshot rebuild` | Local deterministic snapshot from scratch. |
 | Procedure capsule | `mem procedure new/run/promote` | Manual procedure SOP with maturity state. |
 | Recall procedures | `mem ask --type procedure --mode keyword-only` | Find reusable runbooks before high-risk work. |
+| Review procedure candidates | `mem review --brain-root "${BRAIN_ROOT}" --kind procedure_candidate` | After ingest, reusable workflow candidates need explicit user approval before becoming procedure pages. |
 | Estimate import | `mem cost-estimate` | Local cost planning before ingest/import. |
 | Ingest laundry | `mem ingest` | Provider-backed; requires explicit permission. |
 | Build embeddings | `mem reindex` | Provider-backed; requires explicit permission. |

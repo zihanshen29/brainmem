@@ -16,6 +16,10 @@ def review_command(
         str | None,
         typer.Argument(help="Review id or unique prefix to open."),
     ] = None,
+    brain_root: Annotated[
+        Path | None,
+        typer.Option("--brain-root", help="Brain repository root."),
+    ] = None,
     kind: Annotated[
         str | None,
         typer.Option("--kind", help="Filter pending review items by kind."),
@@ -26,7 +30,7 @@ def review_command(
     ] = False,
 ) -> None:
     """List, open, or apply pending review decisions."""
-    root = Path.cwd()
+    root = _root(brain_root)
     try:
         if apply_:
             if review_id is not None:
@@ -61,6 +65,10 @@ def review_command(
     typer.echo("Pending review items:")
     for item in items:
         typer.echo(_format_pending_item(root, item))
+
+
+def _root(brain_root: Path | None) -> Path:
+    return Path.cwd() if brain_root is None else brain_root
 
 
 def _open_editor(path: Path) -> None:

@@ -941,6 +941,21 @@ def _procedure_candidate_event(decision: ReviewDecision) -> Event:
             return Event.model_validate(value)
         except ValidationError:
             pass
+    candidate = decision.data.get("candidate")
+    if isinstance(candidate, dict):
+        source_event = str(candidate.get("source_event") or "").strip()
+        source_ref = str(candidate.get("source_ref") or "").strip()
+        if source_ref:
+            try:
+                return Event(
+                    id=source_event or str(ulid.ULID()),
+                    timestamp=_now_utc(),
+                    kind=EventKind.LAUNDRY_INGESTED,
+                    source_ref=source_ref,
+                    metadata={"source": "procedure_candidate"},
+                )
+            except ValidationError:
+                pass
     return Event(
         id=str(ulid.ULID()),
         timestamp=_now_utc(),

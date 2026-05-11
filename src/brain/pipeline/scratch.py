@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -11,6 +12,7 @@ from brain.ledger.reader import read_all
 from brain.paths import BrainPaths
 
 ENTRY_HEADER_RE = re.compile(r"^## (?P<timestamp>\S+) - source: (?P<source>.+)$")
+SnapshotStrategy = Literal["recent", "dedup"]
 
 
 class ScratchAppendReport(BaseModel):
@@ -33,6 +35,7 @@ class SnapshotRebuildReport(BaseModel):
     path: str
     entries: int
     char_count: int
+    strategy: str
     created: bool
     updated: bool
     summary: str
@@ -84,6 +87,7 @@ def rebuild_snapshot(
     brain_root: Path,
     max_items: int = 20,
     max_chars: int = 8000,
+    strategy: SnapshotStrategy | str = "dedup",
     title: str | None = None,
     timestamp: datetime | str | None = None,
 ) -> SnapshotRebuildReport:
@@ -92,6 +96,7 @@ def rebuild_snapshot(
         raise BrainError("max_items must be positive")
     if max_chars <= 0:
         raise BrainError("max_chars must be positive")
+    normalized_strategy = _normalize_strategy(strategy)
 
     paths = BrainPaths(Path(brain_root))
     working_path = paths.working_buffer
@@ -99,13 +104,19 @@ def rebuild_snapshot(
         raise BrainError(f"Working scratch buffer not found: {working_path}")
 
     entries = _parse_working_entries(working_path.read_text(encoding="utf-8"))
-    selected = _select_recent_entries(entries, max_items=max_items, max_chars=max_chars)
+    selected = _select_snapshot_entries(
+        entries,
+        strategy=normalized_strategy,
+        max_items=max_items,
+        max_chars=max_chars,
+    )
     snapshot = _render_snapshot(
         selected,
         title=title or "Scratch Snapshot",
         timestamp=_format_timestamp(timestamp),
         max_items=max_items,
         max_chars=max_chars,
+        strategy=normalized_strategy,
         procedure_runs=_recent_procedure_runs(paths),
     )
 
@@ -121,9 +132,10 @@ def rebuild_snapshot(
         path=_relative_path(path, paths.root),
         entries=len(selected),
         char_count=char_count,
+        strategy=normalized_strategy,
         created=created,
         updated=updated,
-        summary=f"Rebuilt snapshot with {len(selected)} entries ({char_count} chars)",
+        summary=f"Rebuilt snapshot with {len(selected)} entries ({char_count} chars, strategy={normalized_strategy})",
     )
 
 
@@ -138,13 +150,14 @@ def _render_snapshot(
     timestamp: str,
     max_items: int,
     max_chars: int,
+    strategy: SnapshotStrategy,
     procedure_runs: list[str] | None = None,
 ) -> str:
     lines = [
         f"# {title.strip() or 'Scratch Snapshot'}",
         "",
         f"Generated: {timestamp}",
-        "Strategy: recent-items",
+        f"Strategy: {_strategy_label(strategy)}",
         f"Limits: max_items={max_items}, max_chars={max_chars}",
         f"Entries: {len(entries)}",
         "",
@@ -163,6 +176,21 @@ def _render_snapshot(
         lines.extend(f"- {run}" for run in procedure_runs)
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _normalize_strategy(strategy: SnapshotStrategy | str) -> SnapshotStrategy:
+    value = str(strategy).strip().lower()
+    if value in {"recent", "recent-items"}:
+        return "recent"
+    if value in {"dedup", "dedup-by-source"}:
+        return "dedup"
+    raise BrainError(f"unsupported snapshot strategy: {strategy}")
+
+
+def _strategy_label(strategy: SnapshotStrategy) -> str:
+    if strategy == "recent":
+        return "recent-items"
+    return "dedup-by-source"
 
 
 def _recent_procedure_runs(paths: BrainPaths, limit: int = 5) -> list[str]:
@@ -215,6 +243,45 @@ def _parse_working_entries(text: str) -> list[ScratchEntry]:
             )
         )
     return [entry for entry in entries if entry.text]
+
+
+def _select_snapshot_entries(
+    entries: list[ScratchEntry],
+    *,
+    strategy: SnapshotStrategy,
+    max_items: int,
+    max_chars: int,
+) -> list[ScratchEntry]:
+    if strategy == "recent":
+        return _select_recent_entries(entries, max_items=max_items, max_chars=max_chars)
+    return _select_recent_entries(
+        _dedup_by_source(entries),
+        max_items=max_items,
+        max_chars=max_chars,
+    )
+
+
+def _dedup_by_source(entries: list[ScratchEntry]) -> list[ScratchEntry]:
+    counts: dict[str, int] = {}
+    latest: dict[str, tuple[int, ScratchEntry]] = {}
+    for index, entry in enumerate(entries):
+        counts[entry.source] = counts.get(entry.source, 0) + 1
+        latest[entry.source] = (index, entry)
+
+    selected: list[ScratchEntry] = []
+    for source, (_, entry) in sorted(latest.items(), key=lambda item: item[1][0]):
+        earlier_count = counts[source] - 1
+        if earlier_count <= 0:
+            selected.append(entry)
+            continue
+        selected.append(
+            entry.model_copy(
+                update={
+                    "text": f"{entry.text}\n\n(+{earlier_count} earlier entries from source: {source})"
+                }
+            )
+        )
+    return selected
 
 
 def _select_recent_entries(

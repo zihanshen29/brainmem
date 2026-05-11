@@ -131,6 +131,7 @@ def test_brain_capture_writes_laundry_without_autocommit(
         "raw note",
         brain_root=tmp_path,
         kind="idea",
+        source_agent="codex",
         source_context="unit test",
     )
 
@@ -138,7 +139,7 @@ def test_brain_capture_writes_laundry_without_autocommit(
     assert calls == [
         {
             "root": tmp_path,
-            "text": "source_agent: mcp\nsource_context: unit test\nsource_channel: stdin\n\nraw note",
+            "text": "source_agent: codex\nsource_context: unit test\nsource_channel: stdin\n\nraw note",
             "kind": "idea",
             "source": "stdin",
             "source_ref": None,
@@ -241,7 +242,7 @@ def test_brain_capture_preserves_existing_source_context(
     monkeypatch.setattr(tools, "_capture", fake_capture)
 
     text = "source_agent: codex\nsource_context: task\n\nraw note"
-    tools.brain_capture(text, brain_root=tmp_path)
+    tools.brain_capture(text, brain_root=tmp_path, source_agent="codex")
 
     assert calls[0]["text"] == text
 
@@ -259,14 +260,24 @@ def test_brain_capture_does_not_accept_incidental_source_words(
     monkeypatch.setattr(tools, "_capture", fake_capture)
 
     text = "This note mentions source_agent: and source_context: in the body."
-    tools.brain_capture(text, brain_root=tmp_path, source_context="unit test")
+    tools.brain_capture(
+        text,
+        brain_root=tmp_path,
+        source_agent="codex",
+        source_context="unit test",
+    )
 
-    assert calls[0]["text"].startswith("source_agent: mcp\nsource_context: unit test\n")
+    assert calls[0]["text"].startswith("source_agent: codex\nsource_context: unit test\n")
 
 
 def test_brain_capture_requires_source_context_without_existing_context() -> None:
     with pytest.raises(ValueError, match="source_context is required"):
-        tools.brain_capture("raw note")
+        tools.brain_capture("raw note", source_agent="codex")
+
+
+def test_brain_capture_requires_source_agent_without_existing_context() -> None:
+    with pytest.raises(TypeError, match="source_agent"):
+        tools.brain_capture("raw note", source_context="unit test")
 
 
 def test_brain_inject_passes_page_type_and_include_slug(
@@ -324,10 +335,15 @@ def test_brain_snapshot_rebuild_uses_pipeline_contract(
     fake_module = types.SimpleNamespace(rebuild_snapshot=fake_rebuild_snapshot)
     monkeypatch.setitem(sys.modules, "brain.pipeline.scratch", fake_module)
 
-    result = tools.brain_snapshot_rebuild(tmp_path, max_items=2, max_chars=1200)
+    result = tools.brain_snapshot_rebuild(
+        tmp_path,
+        max_items=2,
+        max_chars=1200,
+        strategy="recent",
+    )
 
     assert result == {"path": "scratch/SNAPSHOT.md", "entries": 2}
-    assert calls == [{"root": tmp_path, "max_items": 2, "max_chars": 1200}]
+    assert calls == [{"root": tmp_path, "max_items": 2, "max_chars": 1200, "strategy": "recent"}]
 
 
 def test_brain_procedure_list_reads_procedure_pages(tmp_path: Path) -> None:
