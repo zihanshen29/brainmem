@@ -24,6 +24,7 @@ from brain.pipeline.rebuild import (
     RebuildReport,
     rebuild_backlinks,
     rebuild_db,
+    rebuild_derived,
     rebuild_index,
     rebuild_pages,
 )
@@ -98,6 +99,7 @@ __all__ = [
     "promote_procedure",
     "rebuild_backlinks",
     "rebuild_db",
+    "rebuild_derived",
     "rebuild_index",
     "rebuild_pages",
     "rebuild_snapshot",

@@ -11,6 +11,10 @@ LINT_KINDS = ("contradictions", "stale", "orphans", "citations")
 
 
 def lint_command(
+    brain_root: Annotated[
+        Path | None,
+        typer.Option("--brain-root", help="Brain repository root."),
+    ] = None,
     all_: Annotated[
         bool,
         typer.Option("--all", help="Run all lint checks."),
@@ -53,7 +57,7 @@ def lint_command(
         raise typer.Exit(1)
 
     try:
-        report = _run_lint(Path.cwd(), kinds, stale_days=days)
+        report = _run_lint(Path.cwd() if brain_root is None else brain_root, kinds, stale_days=days)
     except BrainError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc

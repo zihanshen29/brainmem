@@ -115,6 +115,26 @@ def test_cli_lint_stale_passes_days(
     assert "Total issues: 4" in result.stdout
 
 
+def test_cli_lint_accepts_brain_root_option(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "brain"
+    calls: list[tuple[Path, list[str], int | None]] = []
+
+    def fake_run_lint(root_arg: Path, kinds: list[str], *, stale_days: int | None = None) -> Any:
+        calls.append((root_arg, kinds, stale_days))
+        return {"issue_counts": {"citations": 0}, "review_files": [], "total_issues": 0}
+
+    monkeypatch.setattr(lint_cli, "_run_lint", fake_run_lint)
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["lint", "--brain-root", str(root), "--citations"])
+
+    assert result.exit_code == 0
+    assert calls == [(root, ["citations"], None)]
+
+
 def test_cli_lint_brain_error_outputs_stderr_and_exit_one(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

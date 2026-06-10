@@ -223,6 +223,30 @@ def test_apply_pending_isolates_bad_review_and_continues(brain_root: Path) -> No
 
 
 @requires_review_pipeline
+def test_apply_pending_ignores_undecided_corrupt_payload(brain_root: Path) -> None:
+    _write_review(
+        brain_root,
+        "2026-04-28_001_low_confidence_fact",
+        "low_confidence_fact",
+        "\n".join(
+            [
+                "# Old corrupt review",
+                "",
+                "```json",
+                '{"candidate": ',
+                "```",
+            ]
+        ),
+    )
+
+    report = apply_pending(brain_root)
+
+    assert report.applied == 0
+    assert report.skipped == 0
+    assert report.errors == []
+
+
+@requires_review_pipeline
 def test_apply_new_entity_then_pending_fact_adds_fact_and_page(brain_root: Path) -> None:
     _write_review(
         brain_root,

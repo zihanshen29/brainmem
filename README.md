@@ -170,8 +170,8 @@ Local-only commands:
 - `mem snapshot rebuild`
 - `mem procedure new`, `mem procedure run`, `mem procedure promote`
 - `mem cost-estimate`
-- `mem rebuild --backlinks --index`
-- `mem lint --all`
+- `mem rebuild --brain-root "${BRAIN_ROOT}" --backlinks --index`
+- `mem lint --brain-root "${BRAIN_ROOT}" --all`
 
 Commands that may send content to the configured LLM or embedding provider:
 

@@ -39,7 +39,7 @@ def brain_ask(
     show_sql: bool = False,
     debug: bool = False,
 ) -> dict[str, Any]:
-    """When to call: need BrainMem recall; default keyword-only mode is local-only, while hybrid/semantic/explain may call providers."""
+    """When to call: need BrainMem recall; default keyword-only mode is local-only, while hybrid/semantic/explain may call providers. Return warnings when retrieval downgrades."""
     return to_jsonable(
         _ask(
             _root(brain_root),

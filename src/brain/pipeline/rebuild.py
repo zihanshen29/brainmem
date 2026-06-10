@@ -22,7 +22,7 @@ from brain.paths import BrainPaths
 from brain.pipeline._config import default_pipeline_config
 from brain.pipeline.autolink import extract_backlinks
 
-RebuildScope = Literal["db", "pages", "backlinks", "index"]
+RebuildScope = Literal["db", "pages", "backlinks", "index", "derived"]
 
 
 class RebuildReport(BaseModel):
@@ -151,6 +151,37 @@ def rebuild_backlinks(
         auto_commit,
         "rebuild: backlinks",
         [paths.db_path],
+    )
+    return _sorted_report(report)
+
+
+def rebuild_derived(
+    brain_root: Path,
+    *,
+    auto_commit: bool | None = None,
+) -> RebuildReport:
+    """Rebuild deterministic derived indexes: backlinks and pages/index.md."""
+    paths = BrainPaths(Path(brain_root))
+    report = RebuildReport(scope="derived")
+    conn = connect(paths.db_path)
+    try:
+        pages = _collect_parseable_pages(paths, report)
+        with conn:
+            conn.execute("DELETE FROM backlinks")
+            report.backlinks_rebuilt = _replace_backlinks_for_pages(conn, pages)
+        _finalize_db(conn, paths.db_path)
+    finally:
+        conn.close()
+        _remove_sqlite_sidecars(paths.db_path)
+
+    regenerate_index(paths.root)
+    report.index_rebuilt = True
+    report.pages_touched.append(paths.pages_index.relative_to(paths.root).as_posix())
+    report.committed = _maybe_commit(
+        paths,
+        auto_commit,
+        "rebuild: derived indexes",
+        [paths.db_path, paths.pages_index],
     )
     return _sorted_report(report)
 

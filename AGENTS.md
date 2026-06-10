@@ -134,8 +134,9 @@ Local-only commands do not call an external model or embedding provider:
 - `mem snapshot rebuild --brain-root "${BRAIN_ROOT}"`
 - `mem procedure new/run/promote --brain-root "${BRAIN_ROOT}"`
 - `mem cost-estimate ...`
-- deterministic rebuild/lint commands such as `mem lint --all` and
-  `mem rebuild --backlinks --index`
+- deterministic rebuild/lint commands such as
+  `mem lint --brain-root "${BRAIN_ROOT}" --all` and
+  `mem rebuild --brain-root "${BRAIN_ROOT}" --backlinks --index`
 
 Provider-backed commands require explicit user permission before use on
 sensitive or user-provided content:

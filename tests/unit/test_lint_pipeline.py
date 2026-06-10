@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -65,23 +65,26 @@ def test_lint_contradictions_finds_active_fact_conflict(conn: sqlite3.Connection
 def test_lint_stale_checks_only_tier_one_pages(tmp_path: Path) -> None:
     root = tmp_path / "brain"
     paths = BrainPaths(root)
+    today = datetime.now(UTC).date()
+    old_date = (today - timedelta(days=60)).isoformat()
+    recent_date = (today - timedelta(days=1)).isoformat()
     _write_entity_page(
         paths.entities_dir / "old.md",
         slug="old",
         tier=Tier.TIER_1,
-        timeline=["- 2026-01-01 [event:old]: old update"],
+        timeline=[f"- {old_date} [event:old]: old update"],
     )
     _write_entity_page(
         paths.entities_dir / "recent.md",
         slug="recent",
         tier=Tier.TIER_1,
-        timeline=["- 2026-04-25 [event:recent]: recent update"],
+        timeline=[f"- {recent_date} [event:recent]: recent update"],
     )
     _write_entity_page(
         paths.entities_dir / "tier-two.md",
         slug="tier-two",
         tier=Tier.TIER_2,
-        timeline=["- 2026-01-01 [event:tier-two]: old update"],
+        timeline=[f"- {old_date} [event:tier-two]: old update"],
     )
 
     issues = lint_stale(paths, stale_days=30)

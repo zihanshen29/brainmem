@@ -142,8 +142,9 @@ Local-only commands:
 - `mem snapshot rebuild --brain-root "${BRAIN_ROOT}"`
 - `mem procedure new/run/promote --brain-root "${BRAIN_ROOT}"`
 - `mem cost-estimate ...`
-- deterministic rebuild/lint commands, including `mem lint --all` and
-  `mem rebuild --backlinks --index`
+- deterministic rebuild/lint commands, including
+  `mem lint --brain-root "${BRAIN_ROOT}" --all` and
+  `mem rebuild --brain-root "${BRAIN_ROOT}" --backlinks --index`
 
 Provider-backed commands that need clear permission for sensitive content:
 

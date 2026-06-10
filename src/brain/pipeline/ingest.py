@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sqlite3
 import traceback
@@ -72,6 +73,29 @@ REVIEW_DECISION_SECTION = """## Decision
 [ ] reject
 [ ] defer
 """
+FAILED_LAUNDRY_DIR_NAME = "failed"
+TRANSIENT_ENTITY_PAGE_MIN_MENTIONS = 2
+TRANSIENT_ENTITY_TERMS = {
+    "draft",
+    "note",
+    "notes",
+    "plan",
+    "release",
+    "review",
+    "smoke",
+    "test",
+    "testing",
+    "todo",
+    "upgrade",
+    "verification",
+    "verify",
+}
+TRANSIENT_ENTITY_PATTERNS = (
+    re.compile(r"^v?\d+(?:[-.]\d+){1,4}$", re.IGNORECASE),
+    re.compile(r"^\d{4}[-.]?\d{2}[-.]?\d{2}$"),
+    re.compile(r"\b\d{8}\b"),
+    re.compile(r"\.(?:md|txt|json|toml|ya?ml|py|ts|tsx|js|jsx|pdf|docx?)$", re.IGNORECASE),
+)
 
 class IngestReport(BaseModel):
     """Summary of one ingest run."""
@@ -197,9 +221,12 @@ def ingest(
                 _record_item_success(paths, conn, item, result, report)
             except Exception as exc:
                 report.errors.append(f"{item.source_ref}: {exc}")
-                if not dry_run and item.source == "events":
+                if not dry_run:
                     _write_ingest_error_review(review_writer, item, exc)
-                    _set_cursor(conn, "events", item.event.id)
+                    if item.source == "events":
+                        _set_cursor(conn, "events", item.event.id)
+                    elif item.laundry_path is not None:
+                        _archive_failed_laundry_item(paths, item.laundry_path)
 
         _finalize_run(
             conn,
@@ -308,7 +335,10 @@ def _is_unprocessed_laundry_file(paths: BrainPaths, path: Path) -> bool:
         relative = path.relative_to(paths.laundry_dir)
     except ValueError:
         return False
-    return not relative.parts or relative.parts[0] != paths.laundry_processed_dir.name
+    return not relative.parts or relative.parts[0] not in {
+        paths.laundry_processed_dir.name,
+        FAILED_LAUNDRY_DIR_NAME,
+    }
 
 
 def _collect_event_items(
@@ -325,6 +355,11 @@ def _collect_event_items(
         if event_id is None and last_processed is not None and event.id <= last_processed:
             continue
         if event.kind in {EventKind.BULK_IMPORTED, EventKind.LAUNDRY_INGESTED}:
+            continue
+        if not _event_has_payload(event):
+            if event_id is not None:
+                raise IngestError(f"Event is not ingestible because it has no raw payload: {event.id}")
+            _set_cursor(conn, "events", event.id)
             continue
         text = _event_text(paths.root, event)
         items.append(
@@ -349,6 +384,10 @@ def _collect_event_items_without_cursor(
             continue
         if event.kind in {EventKind.BULK_IMPORTED, EventKind.LAUNDRY_INGESTED}:
             continue
+        if not _event_has_payload(event):
+            if event_id is not None:
+                raise IngestError(f"Event is not ingestible because it has no raw payload: {event.id}")
+            continue
         text = _event_text(paths.root, event)
         items.append(
             IngestItem(
@@ -370,6 +409,10 @@ def _event_text(root: Path, event: Event) -> str:
             path = root / path
         return path.read_text(encoding="utf-8")
     raise IngestError(f"Event has no raw payload: {event.id}")
+
+
+def _event_has_payload(event: Event) -> bool:
+    return bool(event.raw_payload or event.raw_payload_path)
 
 
 def _detect_item_signal(item: IngestItem) -> SignalExtraction:
@@ -692,6 +735,8 @@ def _touch_subject_page(
     page_path = _page_path_for_entity(paths, entity, page_type)
     _persist_entity_page_path(conn, paths, entity, page_path)
     if not page_path.exists():
+        if _should_delay_stub_page(entity):
+            return
         _write_stub_page(page_path, entity, source_ref, page_type)
     else:
         page = parse_page(page_path)
@@ -714,6 +759,23 @@ def _touch_subject_page(
     _append_unique(report.pages_touched, relative)
     result.page_paths.add(page_path)
     result.page_slugs.add(entity.id)
+
+
+def _should_delay_stub_page(entity: Entity) -> bool:
+    return (
+        _is_transient_entity(entity)
+        and entity.mention_count < TRANSIENT_ENTITY_PAGE_MIN_MENTIONS
+    )
+
+
+def _is_transient_entity(entity: Entity) -> bool:
+    slug = entity.id.lower()
+    title = entity.title.lower()
+    if any(pattern.search(slug) or pattern.search(title) for pattern in TRANSIENT_ENTITY_PATTERNS):
+        return True
+
+    terms = {part for part in slug.split("-") if part}
+    return bool(terms & TRANSIENT_ENTITY_TERMS)
 
 
 def _page_type_for_entity(entity: Entity, suggested_page_type: PageType | None = None) -> PageType:
@@ -1060,6 +1122,13 @@ def _record_item_success(
 def _archive_laundry_item(paths: BrainPaths, path: Path) -> None:
     paths.laundry_processed_dir.mkdir(parents=True, exist_ok=True)
     target = _unique_processed_path(paths.laundry_processed_dir / path.name)
+    shutil.move(str(path), str(target))
+
+
+def _archive_failed_laundry_item(paths: BrainPaths, path: Path) -> None:
+    target_dir = paths.laundry_dir / FAILED_LAUNDRY_DIR_NAME
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = _unique_processed_path(target_dir / path.name)
     shutil.move(str(path), str(target))
 
 

@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
@@ -67,6 +68,11 @@ class Fact(BaseModel):
     confidence: float = Field(..., ge=0.0, le=1.0)
     superseded_by: int | None = Field(default=None, ge=1)
 
+    @field_validator("object", mode="before")
+    @classmethod
+    def normalize_object(cls, value: Any) -> Any:
+        return normalize_fact_object(value)
+
     @field_validator("object_type", mode="before")
     @classmethod
     def normalize_object_type(cls, value: Any) -> Any:
@@ -88,7 +94,21 @@ class FactCandidate(BaseModel):
     source_ref: str | None = None
     confidence: float = Field(..., ge=0.0, le=1.0)
 
+    @field_validator("object", mode="before")
+    @classmethod
+    def normalize_object(cls, value: Any) -> Any:
+        return normalize_fact_object(value)
+
     @field_validator("object_type", mode="before")
     @classmethod
     def normalize_object_type(cls, value: Any) -> Any:
         return normalize_fact_object_type(value)
+
+
+def normalize_fact_object(value: Any) -> Any:
+    """Stringify scalar LLM fact objects without hiding structured mistakes."""
+    if isinstance(value, str) or value is None:
+        return value
+    if isinstance(value, int | float | bool):
+        return json.dumps(value, ensure_ascii=False)
+    return value

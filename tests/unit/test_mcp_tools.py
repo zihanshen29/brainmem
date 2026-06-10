@@ -115,6 +115,25 @@ def test_brain_ask_defaults_to_keyword_only(monkeypatch: pytest.MonkeyPatch, tmp
     ]
 
 
+def test_brain_ask_returns_pipeline_warnings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def fake_ask(root: Path, query: str, **kwargs: object) -> dict[str, object]:
+        return {
+            "query": query,
+            "mode": kwargs["mode"],
+            "effective_mode": "keyword-only",
+            "warnings": ["No usable embeddings found. Falling back to keyword-only mode."],
+            "results": [],
+        }
+
+    monkeypatch.setattr(tools, "_ask", fake_ask)
+
+    result = tools.brain_ask("memory query", brain_root=tmp_path, mode="hybrid")
+
+    assert result["warnings"] == [
+        "No usable embeddings found. Falling back to keyword-only mode."
+    ]
+
+
 def test_brain_capture_writes_laundry_without_autocommit(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

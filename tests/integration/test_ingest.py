@@ -132,6 +132,32 @@ def test_project_entity_uses_project_page_directory(
     assert not (brain_root / "pages" / "entities" / "brain-project.md").exists()
 
 
+def test_transient_entity_delays_stub_page_until_repeated_evidence(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    extractions = [
+        _transient_extraction(predicate="stage", object_value="first-seen"),
+        _transient_extraction(predicate="status", object_value="confirmed"),
+    ]
+    _install_signal_detector(monkeypatch, lambda: extractions.pop(0))
+
+    _write_laundry(brain_root, "Smoke Verification appeared once.")
+    first_report = _run_ingest(brain_root, source="laundry")
+    page_path = brain_root / "pages" / "concepts" / "smoke-verification.md"
+
+    assert first_report.facts_added == 1
+    assert first_report.pages_touched == []
+    assert not page_path.exists()
+
+    _write_laundry(brain_root, "Smoke Verification appeared again.")
+    second_report = _run_ingest(brain_root, source="laundry")
+
+    assert second_report.facts_added == 1
+    assert second_report.pages_touched == ["pages/concepts/smoke-verification.md"]
+    assert page_path.exists()
+
+
 def test_high_confidence_procedure_candidate_creates_review(
     brain_root: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -327,6 +353,45 @@ def test_events_ingest_uses_cursor_to_skip_processed_events(
     assert cursor[0]["last_processed"] == VALID_ULID
 
 
+def test_events_ingest_skips_events_without_payload(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    append_event(
+        brain_root / "events.jsonl",
+        Event(
+            id=VALID_ULID,
+            timestamp=datetime(2026, 4, 28, 12, 0, tzinfo=UTC),
+            kind=EventKind.REINDEXED,
+            source_ref="reindex",
+        ),
+    )
+    append_event(
+        brain_root / "events.jsonl",
+        Event(
+            id=SECOND_ULID,
+            timestamp=datetime(2026, 4, 29, 12, 0, tzinfo=UTC),
+            kind=EventKind.RAW_IMPORTED,
+            source_ref="raw/alice.md",
+            raw_payload="Alice started maintaining Brain.",
+        ),
+    )
+    detector_calls = _install_signal_detector(monkeypatch, lambda: _alice_extraction())
+
+    report = _run_ingest(brain_root, source="events")
+
+    cursor = _rows(
+        brain_root,
+        "SELECT last_processed FROM ingest_cursor WHERE source = ?",
+        ("events",),
+    )
+
+    assert report.processed == 1
+    assert report.errors == []
+    assert len(detector_calls) == 1
+    assert cursor[0]["last_processed"] == SECOND_ULID
+
+
 def test_events_ingest_failure_writes_review_and_advances_cursor(
     brain_root: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -368,6 +433,32 @@ def test_events_ingest_failure_writes_review_and_advances_cursor(
     assert "detector unavailable" in review_text
     assert VALID_ULID in review_text
     assert report.review_files == [review_files[0].relative_to(brain_root).as_posix()]
+
+
+def test_laundry_ingest_failure_writes_review_and_moves_to_failed(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    laundry_path = _write_laundry(brain_root, "Alice started maintaining Brain.")
+
+    def raise_detection_error() -> SignalExtraction:
+        raise RuntimeError("detector unavailable")
+
+    _install_signal_detector(monkeypatch, raise_detection_error)
+
+    report = _run_ingest(brain_root, source="laundry")
+
+    failed_path = brain_root / "laundry" / "failed" / laundry_path.name
+    review_files = list((brain_root / "review").glob("*.md"))
+
+    assert report.processed == 0
+    assert report.facts_added == 0
+    assert report.review_items_created == 1
+    assert report.laundry_archived == 0
+    assert not laundry_path.exists()
+    assert failed_path.exists()
+    assert len(review_files) == 1
+    assert "kind: ingest_error" in review_files[0].read_text(encoding="utf-8")
 
 
 def test_conflicting_fact_creates_fact_conflict_review(
@@ -594,6 +685,34 @@ def _alice_extraction(
         ],
         timeline_summary=summary,
         suggested_page_type=PageType.ENTITY,
+    )
+
+
+def _transient_extraction(*, predicate: str, object_value: str) -> SignalExtraction:
+    return SignalExtraction(
+        entities=[
+            SignalEntity(
+                name="Smoke Verification",
+                type=EntityType.CONCEPT,
+                confidence=0.95,
+                metadata={},
+            ),
+        ],
+        facts=[
+            FactCandidate(
+                subject="smoke-verification",
+                predicate=predicate,
+                object=object_value,
+                object_type=FactObjectType.LITERAL,
+                valid_from="2026-04-28",
+                valid_to=None,
+                source_event=SECOND_ULID,
+                source_ref="laundry/smoke.md",
+                confidence=0.9,
+            ),
+        ],
+        timeline_summary="Smoke Verification was mentioned.",
+        suggested_page_type=PageType.CONCEPT,
     )
 
 

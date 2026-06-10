@@ -9,6 +9,10 @@ from brain.exceptions import BrainError
 
 
 def rebuild_command(
+    brain_root: Annotated[
+        Path | None,
+        typer.Option("--brain-root", help="Brain repository root."),
+    ] = None,
     db: Annotated[
         bool,
         typer.Option("--db", help="Rebuild brain.db, backlinks, and pages/index.md."),
@@ -25,6 +29,10 @@ def rebuild_command(
         bool,
         typer.Option("--index", help="Regenerate pages/index.md."),
     ] = False,
+    all_: Annotated[
+        bool,
+        typer.Option("--all", help="Rebuild deterministic derived indexes: backlinks and pages/index.md."),
+    ] = False,
     force: Annotated[
         bool,
         typer.Option("--force", help="Required with --pages to rewrite compiled truth."),
@@ -35,7 +43,7 @@ def rebuild_command(
     ] = False,
 ) -> None:
     """Rebuild derived brain artifacts in the current repository."""
-    selected = _selected_scopes(db=db, pages=pages, backlinks=backlinks, index=index)
+    selected = _selected_scopes(db=db, pages=pages, backlinks=backlinks, index=index, all_=all_)
     if len(selected) != 1:
         typer.echo("Error: select exactly one rebuild scope", err=True)
         raise typer.Exit(1)
@@ -50,7 +58,8 @@ def rebuild_command(
         raise typer.Exit(1)
 
     try:
-        report = _run_rebuild(Path.cwd(), scope=scope, pages=pages, force=force)
+        root = Path.cwd() if brain_root is None else brain_root
+        report = _run_rebuild(root, scope=scope, pages=pages, force=force)
     except BrainError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -64,15 +73,18 @@ def _selected_scopes(
     pages: str | None,
     backlinks: bool,
     index: bool,
+    all_: bool,
 ) -> list[str]:
     selected: list[str] = []
     if db:
         selected.append("db")
     if pages is not None:
         selected.append("pages")
-    if backlinks:
+    if all_ or (backlinks and index):
+        selected.append("derived")
+    elif backlinks:
         selected.append("backlinks")
-    if index:
+    elif index:
         selected.append("index")
     return selected
 
@@ -87,7 +99,13 @@ def _confirm(scope: str, pages: str | None) -> bool:
 
 
 def _run_rebuild(root: Path, *, scope: str, pages: str | None, force: bool) -> Any:
-    from brain.pipeline import rebuild_backlinks, rebuild_db, rebuild_index, rebuild_pages
+    from brain.pipeline import (
+        rebuild_backlinks,
+        rebuild_db,
+        rebuild_derived,
+        rebuild_index,
+        rebuild_pages,
+    )
 
     if scope == "db":
         return rebuild_db(root)
@@ -99,6 +117,8 @@ def _run_rebuild(root: Path, *, scope: str, pages: str | None, force: bool) -> A
         return rebuild_backlinks(root)
     if scope == "index":
         return rebuild_index(root)
+    if scope == "derived":
+        return rebuild_derived(root)
     raise BrainError(f"unknown rebuild scope: {scope}")
 
 

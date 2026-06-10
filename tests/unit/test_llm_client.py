@@ -196,6 +196,50 @@ def test_extract_signal_schema_invalid_preserves_validation_error(
         llm_client.extract_signal("Zihan is in the US.")
 
 
+def test_extract_signal_coerces_near_valid_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = signal_payload()
+    payload["entities"] = [
+        {
+            "name": "Zihan",
+            "type": "person",
+            "metadata": None,
+        }
+    ]
+    payload["facts"][0]["object"] = 1
+
+    monkeypatch.setattr(llm_client, "_extract_impl", lambda prompt, use_fast=False: payload)
+
+    result = llm_client.extract_signal("Zihan version is 1.")
+
+    assert result.entities[0].confidence == 0.5
+    assert result.entities[0].metadata == {}
+    assert result.facts[0].object == "1"
+
+
+def test_extract_signal_retries_schema_validation_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = [
+        {"facts": [{"subject": ""}]},
+        signal_payload(),
+    ]
+    prompts: list[str] = []
+
+    def fake_extract(prompt: str, use_fast: bool = False) -> dict[str, object]:
+        prompts.append(prompt)
+        return responses.pop(0)
+
+    monkeypatch.setattr(llm_client, "_extract_impl", fake_extract)
+
+    result = llm_client.extract_signal("Zihan is in the US.")
+
+    assert result.facts == [sample_candidate()]
+    assert len(prompts) == 2
+    assert "failed the required schema" in prompts[1]
+
+
 def test_judge_conflict_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         llm_client,

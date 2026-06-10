@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Fixed ingest robustness for non-material ledger events, near-valid signal
+  extraction payloads, failed laundry quarantine, and noisy transient entity
+  stub creation.
+- Fixed review apply noise by ignoring undecided pending files before parsing
+  their structured payloads.
+- Added `--brain-root` to `mem lint` and `mem rebuild`, plus script-friendly
+  `mem rebuild --backlinks --index` / `mem rebuild --all` derived index repair.
 - Added `mem-mcp-http` HTTP/SSE transport for opt-in remote MCP access.
 - Added optional shared-token authentication for HTTP/SSE requests.
 - Added a remote tool whitelist model for HTTP/SSE exposure, with high-risk

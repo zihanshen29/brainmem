@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
 
 from brain.config import AnthropicConfig, DeepSeekConfig, OpenAIConfig, load_config
 from brain.exceptions import ConfigError, LLMError
@@ -113,7 +113,12 @@ def extract_signal(text: str) -> SignalExtraction:
 
     prompt = build_signal_extraction_prompt(text)
     data = _request_structured_json(prompt, use_fast=True)
-    return SignalExtraction.model_validate(data)
+    try:
+        return SignalExtraction.model_validate(_normalize_signal_payload(data))
+    except ValidationError as exc:
+        repair_prompt = _build_signal_repair_prompt(prompt, data, exc)
+        repaired = _request_structured_json(repair_prompt, use_fast=True)
+        return SignalExtraction.model_validate(_normalize_signal_payload(repaired))
 
 
 def judge_conflict(old: Fact, new: FactCandidate) -> ConflictJudgment:
@@ -160,6 +165,73 @@ def promote_chat(
 def _request_structured_json(prompt: str, use_fast: bool = False) -> Any:
     response = _invoke_with_retry(prompt, use_fast=use_fast)
     return _parse_structured_response(response)
+
+
+def _normalize_signal_payload(data: Any) -> Any:
+    if not isinstance(data, dict):
+        return data
+
+    normalized = dict(data)
+    normalized["entities"] = _normalize_signal_items(
+        normalized.get("entities", []),
+        default_confidence=0.5,
+    )
+    normalized["facts"] = _normalize_signal_facts(normalized.get("facts", []))
+    normalized["procedure_candidates"] = _normalize_signal_items(
+        normalized.get("procedure_candidates", []),
+        default_confidence=0.5,
+    )
+    normalized.setdefault("suggested_page_type", None)
+    return normalized
+
+
+def _normalize_signal_items(value: Any, *, default_confidence: float) -> Any:
+    if not isinstance(value, list):
+        return value
+
+    items: list[Any] = []
+    for item in value:
+        if not isinstance(item, dict):
+            items.append(item)
+            continue
+        normalized = dict(item)
+        if normalized.get("confidence") is None:
+            normalized["confidence"] = default_confidence
+        if normalized.get("metadata") is None:
+            normalized["metadata"] = {}
+        items.append(normalized)
+    return items
+
+
+def _normalize_signal_facts(value: Any) -> Any:
+    if not isinstance(value, list):
+        return value
+
+    facts: list[Any] = []
+    for fact in value:
+        if not isinstance(fact, dict):
+            facts.append(fact)
+            continue
+        normalized = dict(fact)
+        object_value = normalized.get("object")
+        if isinstance(object_value, int | float | bool):
+            normalized["object"] = json.dumps(object_value, ensure_ascii=False)
+        facts.append(normalized)
+    return facts
+
+
+def _build_signal_repair_prompt(prompt: str, data: Any, exc: ValidationError) -> str:
+    return "\n\n".join(
+        [
+            prompt,
+            "The previous response was valid JSON but failed the required schema.",
+            "Return only corrected JSON matching the original extraction schema.",
+            "Validation errors:",
+            exc.json(),
+            "Previous JSON:",
+            json.dumps(data, ensure_ascii=False, indent=2),
+        ]
+    )
 
 
 def _invoke_with_retry(prompt: str, *, use_fast: bool) -> Any:

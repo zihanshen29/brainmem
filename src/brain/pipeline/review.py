@@ -227,6 +227,11 @@ def parse_review_file(path: Path) -> ReviewDecision:
     )
 
 
+def _selected_action_from_file(path: Path) -> tuple[ReviewAction, list[str]]:
+    post = frontmatter.loads(Path(path).read_text(encoding="utf-8"))
+    return _selected_action(post.content)
+
+
 def apply_pending(brain_root: Path, kind: str | ReviewKind | None = None) -> ReviewBatchReport:
     """Apply all pending review files that have a selected decision."""
     paths = BrainPaths(Path(brain_root))
@@ -246,7 +251,15 @@ def apply_pending(brain_root: Path, kind: str | ReviewKind | None = None) -> Rev
                 continue
 
             try:
-                report = apply_decision(conn, parse_review_file(item.path))
+                action, action_errors = _selected_action_from_file(item.path)
+                if action_errors:
+                    raise BrainError("; ".join(action_errors))
+                if action is ReviewAction.NONE:
+                    continue
+                if action is ReviewAction.DEFER:
+                    report = _deferred_review_report(item)
+                else:
+                    report = apply_decision(conn, parse_review_file(item.path))
             except Exception as exc:
                 report = _failed_review_report(item.path, exc, item=item)
             _add_batch_report(batch, report)
@@ -294,6 +307,16 @@ def _failed_review_report(
     )
     report.errors.append(f"{Path(path).name}: {exc}")
     return report
+
+
+def _deferred_review_report(item: ReviewItem) -> ReviewApplyReport:
+    return ReviewApplyReport(
+        review_id=item.review_id,
+        kind=item.kind,
+        action=ReviewAction.DEFER,
+        path=item.path,
+        skipped=True,
+    )
 
 
 def _safe_kind_from_path(path: Path) -> ReviewKind:

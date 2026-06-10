@@ -154,8 +154,8 @@ brain-root/            本地运行数据，不要发布到 GitHub
 - `mem snapshot rebuild`
 - `mem procedure new`、`mem procedure run`、`mem procedure promote`
 - `mem cost-estimate`
-- `mem rebuild --backlinks --index`
-- `mem lint --all`
+- `mem rebuild --brain-root "${BRAIN_ROOT}" --backlinks --index`
+- `mem lint --brain-root "${BRAIN_ROOT}" --all`
 
 可能把内容发送给配置的 LLM 或 embedding provider 的命令：
 

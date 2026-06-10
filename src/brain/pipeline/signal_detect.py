@@ -15,7 +15,7 @@ class SignalEntity(BaseModel):
 
     name: str = Field(..., min_length=1)
     type: EntityType | None = None
-    confidence: float = Field(..., ge=0.0, le=1.0)
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("metadata", mode="before")
@@ -42,7 +42,7 @@ class ProcedureCandidate(BaseModel):
     steps: list[str] = Field(default_factory=list)
     source_event: str | None = None
     source_ref: str | None = None
-    confidence: float = Field(..., ge=0.0, le=1.0)
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("metadata", mode="before")
@@ -64,11 +64,11 @@ class SignalExtraction(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    entities: list[SignalEntity]
-    facts: list[FactCandidate]
+    entities: list[SignalEntity] = Field(default_factory=list)
+    facts: list[FactCandidate] = Field(default_factory=list)
     procedure_candidates: list[ProcedureCandidate] = Field(default_factory=list)
     timeline_summary: str = Field(..., min_length=1)
-    suggested_page_type: PageType | None
+    suggested_page_type: PageType | None = None
 
 
 def _build_signal_input(text: str, hint: dict[str, Any] | None) -> str:

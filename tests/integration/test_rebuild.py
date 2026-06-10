@@ -3,12 +3,14 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from typer.testing import CliRunner
 
 import brain.pipeline.rebuild as rebuild_pipeline
+from brain.cli import rebuild as rebuild_cli
 from brain.cli.main import app
 from brain.db.backlinks import replace_backlinks_for_page
 from brain.db.connection import connect
@@ -114,6 +116,64 @@ def test_cli_rebuild_index_updates_pages_index(
     assert result.exit_code == 0
     _assert_summary_fields(result.stdout, "index")
     assert "- [Alice](entities/alice.md)" in index_path.read_text(encoding="utf-8")
+
+
+def test_cli_rebuild_backlinks_and_index_accepts_brain_root_without_prompt(
+    brain_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_rebuild_fixture_pages(brain_root)
+    rebuild_pipeline.rebuild_db(brain_root, auto_commit=False)
+    index_path = brain_root / "pages" / "index.md"
+    index_path.write_text("stale\n", encoding="utf-8", newline="\n")
+    with connect(brain_root / "brain.db") as conn:
+        replace_backlinks_for_page(
+            conn,
+            "brain-project",
+            [
+                Backlink(
+                    from_page="brain-project",
+                    to_entity="alice",
+                    relation="stale",
+                    line_number=1,
+                    extracted_at=_utc_now(),
+                )
+            ],
+        )
+        conn.commit()
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["rebuild", "--brain-root", str(brain_root), "--backlinks", "--index"],
+    )
+
+    assert result.exit_code == 0
+    _assert_summary_fields(result.stdout, "derived")
+    relations = [row[0] for row in _rows(brain_root, "SELECT relation FROM backlinks")]
+    assert "stale" not in relations
+    assert "- [Alice](entities/alice.md)" in index_path.read_text(encoding="utf-8")
+
+
+def test_cli_rebuild_all_selects_derived_scope(
+    brain_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[Path, str, str | None, bool]] = []
+
+    def fake_run_rebuild(root: Path, *, scope: str, pages: str | None, force: bool) -> Any:
+        calls.append((root, scope, pages, force))
+        return SimpleNamespace(scope=scope, index_rebuilt=True)
+
+    monkeypatch.setattr(rebuild_cli, "_run_rebuild", fake_run_rebuild)
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["rebuild", "--brain-root", str(brain_root), "--all"])
+
+    assert result.exit_code == 0
+    assert calls == [(brain_root, "derived", None, False)]
 
 
 def test_cli_rebuild_pages_force_rewrites_compiled_truth_without_real_llm(
