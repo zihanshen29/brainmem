@@ -25,6 +25,7 @@ dependencies = [
 [project.scripts]
 mem = "brain.cli.main:app"
 mem-mcp = "brain.mcp.server:main"
+mem-mcp-http = "brain.mcp.server_http:main"
 
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]

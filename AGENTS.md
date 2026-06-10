@@ -13,6 +13,10 @@ this order:
    `data_root`.
 4. Default: `~/brain`.
 
+For HTTP/SSE MCP remote mode, the server fixes `${BRAIN_ROOT}` at startup.
+Remote clients must not pass or override `brain_root`; the server-side value is
+authoritative. This remote-mode rule does not change stdio behavior.
+
 Use `AGENTS.local.md` for machine-specific notes such as Windows paths,
 private data roots, or local wrapper locations. `AGENTS.local.md` is ignored by
 Git and must not be committed.
@@ -147,12 +151,22 @@ sensitive or user-provided content:
 Before provider-backed commands, hydrate API keys from the user's environment.
 Never print, store, or commit API keys.
 
+HTTP/SSE MCP transport changes only how a client reaches BrainMem. It does not
+change the provider consent boundary above. BrainMem does not provide built-in
+TLS for HTTP/SSE; use an outer private network, tunnel, or reverse proxy for
+transport encryption and access control.
+
 ## Review Queue Rule
 
 The review queue is human-controlled. Agents may list, inspect, or summarize
 pending review items when asked. Agents must not approve, reject, select a
 decision, or apply review items unless the user explicitly instructs that exact
 action.
+
+Remote MCP deployments must not expose high-risk review apply tools. Procedure
+creation and promotion tools, such as `procedure_new` and `procedure_promote`,
+are opt-in for remote mode and should be enabled only when the user's operating
+policy explicitly allows them.
 
 ## CLI And MCP Tool Correspondence
 

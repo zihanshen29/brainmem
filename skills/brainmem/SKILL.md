@@ -13,6 +13,10 @@ This public skill uses portable placeholders. The user's data root is
    `data_root`.
 4. Default: `~/brain`.
 
+For HTTP/SSE MCP remote mode, `${BRAIN_ROOT}` is fixed by the server at startup.
+Remote clients must not pass or override `brain_root`; that behavior is limited
+to local CLI and stdio MCP use.
+
 Machine-specific paths, direct virtualenv executables, API key setup, and
 private operating notes belong in a local override such as
 `skills/brainmem/SKILL.local.md`, which must not be committed.
@@ -155,6 +159,12 @@ Provider-backed commands that need clear permission for sensitive content:
 Before provider-backed commands, hydrate API keys from the user's environment.
 Never print, store, or commit API keys.
 
+HTTP/SSE MCP transport changes only the request transport. It does not change
+which commands are local-only or provider-backed, and it does not remove the
+need for explicit permission on sensitive provider-backed work. BrainMem does
+not include built-in TLS for HTTP/SSE; use an outer private network, tunnel, or
+reverse proxy for encryption and access control.
+
 ## Review Queue SOP
 
 The review queue is not agent-autonomous.
@@ -172,6 +182,11 @@ Not allowed without explicit user instruction:
 - Select or edit a review decision.
 - Run apply flows.
 - Rewrite compiled truth through review application.
+
+Remote MCP deployments must not expose review apply tools. Procedure creation
+and promotion tools, such as `procedure_new` and `procedure_promote`, are
+opt-in for remote mode and should be enabled only when the user's operating
+policy explicitly allows them.
 
 ## CLI And MCP Tool Mapping
 

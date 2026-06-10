@@ -77,7 +77,7 @@ def list_jobs(
         SELECT *
         FROM import_jobs
         {where}
-        ORDER BY started_at DESC
+        ORDER BY started_at DESC, rowid DESC
         {limit_clause}
         """,
         params,
@@ -197,7 +197,7 @@ def find_latest_unfinished_job(conn: sqlite3.Connection) -> ImportJob | None:
         """
         SELECT * FROM import_jobs
         WHERE status IN ('running', 'paused', 'failed')
-        ORDER BY started_at DESC
+        ORDER BY started_at DESC, rowid DESC
         """
     ).fetchall()
     for row in rows:

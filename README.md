@@ -38,6 +38,7 @@ Key design choices:
 - **Human-in-the-loop memory:** conflicts, low-confidence facts, new entities, and tier changes can go through review before becoming durable truth.
 - **Provenance by default:** pages carry timeline entries and sources; derived indexes can be rebuilt from the source files.
 - **Hybrid retrieval instead of vector-only recall:** `mem ask` combines vector search, BM25 keyword search, SQL/entity matching, and RRF.
+- **Optional remote MCP access:** HTTP/SSE transport can be enabled for trusted multi-device clients while stdio remains the default.
 - **Agent-friendly but not agent-owned:** agents can use it, but they do not silently control your long-term memory.
 
 ## Good Fit
@@ -62,6 +63,7 @@ It is not trying to be a multi-user SaaS memory backend, a hosted chatbot platfo
 | Hybrid retrieval | `mem ask` uses vector + keyword + SQL matching with RRF, with keyword-only fallback |
 | Bulk import | `mem import` turns `.md`, `.txt`, `.pdf`, and `.jsonl` files into laundry items with resumable jobs |
 | CLI workflow | `init`, `capture`, `ingest`, `reindex`, `import`, `cost-estimate`, `ask`, `inject`, `scratch`, `snapshot`, `procedure`, `review`, `lint`, `rebuild`, `status`, `promote-chat`, `entity` |
+| MCP access | stdio by default, with optional HTTP/SSE transport for trusted remote MCP clients |
 | LLM support | DeepSeek V4 by default for LLM work; OpenAI or OpenAI-compatible embeddings; Anthropic remains configurable |
 | Privacy boundary | Keyword-only `mem ask` is local; default hybrid `mem ask` embeds the query through the embedding provider; `mem reindex` calls the embedding provider; `mem ingest` and `mem ask --explain` can call the configured LLM |
 
@@ -119,6 +121,17 @@ mem reindex
 ```
 
 `mem init` writes a DeepSeek config by default for LLM extraction/rewrite work, and an OpenAI-compatible embedding config for `mem reindex`. Advanced users can mix providers by editing `config.toml`: `[deepseek]` for DeepSeek or compatible chat APIs, `[openai]` for OpenAI, `[anthropic]` for Anthropic, and `[embedding]` for OpenAI or another OpenAI-compatible embedding endpoint. Store only environment variable names in config; keep real API keys in the environment.
+
+## Multi-Device Access
+
+BrainMem's stdio MCP transport remains the default for local clients. For
+trusted multi-device setups, `mem-mcp-http` can expose the same MCP tools over
+HTTP/SSE. The server fixes `brain_root` at startup, remote clients cannot
+override it, and provider-backed commands still require the same explicit
+permission as local CLI use.
+
+See [docs/multi-device.md](docs/multi-device.md) for the recommended Tailscale
+topology, shared-token authentication, remote tool whitelist, and known limits.
 
 ## Data Layout
 
@@ -191,5 +204,6 @@ The root `docs/` files are the current product and design documentation:
 - [pipeline.md](docs/pipeline.md)
 - [cli.md](docs/cli.md)
 - [tech-stack.md](docs/tech-stack.md)
+- [multi-device.md](docs/multi-device.md)
 
 Phase 1 and Phase 2 historical implementation notes are archived under [docs/archive/](docs/archive/).

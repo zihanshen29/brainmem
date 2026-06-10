@@ -32,6 +32,7 @@ Phase 2 增加了 hybrid retrieval、sqlite-vec embedding、Markdown/Text/PDF/JS
 - **人参与的记忆写入**：冲突、低置信事实、新实体和 tier 变化可以进入 review 队列。
 - **默认保留 provenance**：页面包含 timeline 和 sources，派生索引可以从源文件重建。
 - **混合检索**：`mem ask` 结合 vector、BM25 keyword、SQL/entity matching 与 RRF。
+- **可选远程 MCP 访问**：可信多设备场景可启用 HTTP/SSE transport；本地 stdio 仍是默认模式。
 - **智能体可用，但不拥有记忆**：agent 可以调用 BrainMem，但长期事实仍由用户可审计地控制。
 
 ## 核心能力
@@ -47,6 +48,7 @@ Phase 2 增加了 hybrid retrieval、sqlite-vec embedding、Markdown/Text/PDF/JS
 | 当前快照 | `mem snapshot rebuild` 从 scratch 生成本地 deterministic snapshot |
 | 可复用流程 | `mem procedure new/run/promote` 维护 raw/tested/stable 状态的 SOP |
 | 批量导入 | `mem import` 支持 `.md`、`.txt`、`.pdf`、`.jsonl` |
+| MCP 访问 | 默认使用 stdio；可信远程 MCP 客户端可选启用 HTTP/SSE transport |
 | 隐私边界 | `mem ask --mode keyword-only`、`mem inject --mode keyword-only`、scratch、snapshot、procedure 是本地命令；默认 hybrid ask、reindex、ingest、explain 可能调用 provider |
 
 ## 快速开始
@@ -103,6 +105,15 @@ mem reindex
 ```
 
 `mem init` 默认写入 DeepSeek LLM 配置和 OpenAI-compatible embedding 配置。真实 API key 放在环境变量里，`config.toml` 只保存环境变量名。
+
+## 多设备访问
+
+BrainMem 的本地 MCP 默认仍使用 stdio transport。可信多设备场景可以用
+`mem-mcp-http` 把同一组 MCP 工具通过 HTTP/SSE 暴露给远程客户端。服务端启动时固定
+`brain_root`，远程客户端不能覆盖；provider-backed 命令仍遵守与本地 CLI 相同的显式许可规则。
+
+推荐拓扑、共享 token 鉴权、远程工具白名单和已知限制见
+[docs/multi-device.md](docs/multi-device.md)。
 
 ## 数据结构
 
@@ -177,5 +188,6 @@ brain-root/            本地运行数据，不要发布到 GitHub
 - [pipeline.md](docs/pipeline.md)
 - [cli.md](docs/cli.md)
 - [tech-stack.md](docs/tech-stack.md)
+- [multi-device.md](docs/multi-device.md)
 
 Phase 1 和 Phase 2 历史实施说明归档在 [docs/archive/](docs/archive/)。
