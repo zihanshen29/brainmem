@@ -1,6 +1,7 @@
 from brain.pipeline.ask import AskModeTrace, AskPageSummary, AskResult, ask
 from brain.pipeline.autolink import extract_backlinks
 from brain.pipeline.conflict import Decision, classify_fact
+from brain.pipeline.entity_prune import EntityPruneReport, prune_stub_entities
 from brain.pipeline.ingest import IngestReport, ingest
 from brain.pipeline.lint import (
     LintIssue,
@@ -35,11 +36,13 @@ from brain.pipeline.review import (
     ReviewDecision,
     ReviewItem,
     ReviewKind,
+    ReviewQuarantineReport,
     ReviewStatus,
     apply_decision,
     apply_pending,
     list_pending,
     parse_review_file,
+    quarantine_invalid_pending,
     resolve_review_path,
 )
 from brain.pipeline.signal_detect import SignalEntity, SignalExtraction, detect_signal
@@ -62,6 +65,7 @@ __all__ = [
     "AskPageSummary",
     "AskResult",
     "Decision",
+    "EntityPruneReport",
     "IngestReport",
     "LintIssue",
     "LintKind",
@@ -75,6 +79,7 @@ __all__ = [
     "ReviewDecision",
     "ReviewItem",
     "ReviewKind",
+    "ReviewQuarantineReport",
     "ReviewStatus",
     "SignalEntity",
     "SignalExtraction",
@@ -97,6 +102,8 @@ __all__ = [
     "parse_review_file",
     "promote_chat",
     "promote_procedure",
+    "prune_stub_entities",
+    "quarantine_invalid_pending",
     "rebuild_backlinks",
     "rebuild_db",
     "rebuild_derived",

@@ -145,6 +145,17 @@ class ReviewBatchReport(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+class ReviewQuarantineReport(BaseModel):
+    """Result of moving invalid undecided review files out of the pending queue."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    quarantined: int = 0
+    skipped: int = 0
+    files: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+
+
 JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(?P<body>.*?)```", re.IGNORECASE | re.DOTALL)
 CHECKBOX_RE = re.compile(r"^\s*(?:[-*]\s*)?\[(?P<mark>[xX])\]\s*(?P<label>.+?)\s*$")
 KEY_VALUE_RE = re.compile(r"^\s*(?:[-*]\s*)?(?P<key>[A-Za-z_][\w-]*):\s*(?P<value>.*?)\s*$")
@@ -257,7 +268,7 @@ def apply_pending(brain_root: Path, kind: str | ReviewKind | None = None) -> Rev
                 if action is ReviewAction.NONE:
                     continue
                 if action is ReviewAction.DEFER:
-                    report = _deferred_review_report(item)
+                    report = _defer_review_item(conn, item)
                 else:
                     report = apply_decision(conn, parse_review_file(item.path))
             except Exception as exc:
@@ -272,6 +283,41 @@ def apply_pending(brain_root: Path, kind: str | ReviewKind | None = None) -> Rev
     return batch
 
 
+def quarantine_invalid_pending(
+    brain_root: Path,
+    kind: str | ReviewKind | None = None,
+) -> ReviewQuarantineReport:
+    """Move undecided pending review files with invalid payloads to review/quarantine."""
+    paths = BrainPaths(Path(brain_root))
+    kind_filter = _coerce_kind(kind) if kind is not None else None
+    report = ReviewQuarantineReport()
+    for path in sorted(paths.review_dir.glob("*.md")):
+        try:
+            item = _read_review_item(path)
+            if item.status is not ReviewStatus.PENDING:
+                report.skipped += 1
+                continue
+            if kind_filter is not None and item.kind is not kind_filter:
+                report.skipped += 1
+                continue
+            action, action_errors = _selected_action_from_file(path)
+            if action is not ReviewAction.NONE or action_errors:
+                report.skipped += 1
+                continue
+            reason = _invalid_payload_reason(path)
+            if reason is None:
+                report.skipped += 1
+                continue
+            target = _mark_and_quarantine(path, reason)
+            report.quarantined += 1
+            report.files.append(target.relative_to(paths.root).as_posix())
+        except Exception as exc:
+            report.errors.append(f"{path.name}: {exc}")
+    if report.quarantined:
+        _auto_commit(paths, report.quarantined, message="review: quarantine invalid pending files")
+    return report
+
+
 def _add_batch_report(batch: ReviewBatchReport, report: ReviewApplyReport) -> None:
     batch.reports.append(report)
     batch.errors.extend(report.errors)
@@ -283,10 +329,11 @@ def _add_batch_report(batch: ReviewBatchReport, report: ReviewApplyReport) -> No
             batch.approved += 1
         elif report.action is ReviewAction.REJECT:
             batch.rejected += 1
-        if report.archived_path is not None:
-            batch.archived += 1
     elif report.action is ReviewAction.DEFER:
         batch.deferred += 1
+
+    if report.archived_path is not None:
+        batch.archived += 1
 
     if report.skipped or report.errors:
         batch.skipped += 1
@@ -309,14 +356,42 @@ def _failed_review_report(
     return report
 
 
-def _deferred_review_report(item: ReviewItem) -> ReviewApplyReport:
-    return ReviewApplyReport(
+def _defer_review_item(conn: sqlite3.Connection, item: ReviewItem) -> ReviewApplyReport:
+    decision = ReviewDecision(
         review_id=item.review_id,
         kind=item.kind,
-        action=ReviewAction.DEFER,
+        status=item.status,
         path=item.path,
+        action=ReviewAction.DEFER,
+    )
+    report = ReviewApplyReport(
+        review_id=decision.review_id,
+        kind=decision.kind,
+        action=decision.action,
+        path=decision.path,
         skipped=True,
     )
+    paths = BrainPaths(_infer_brain_root(decision.path))
+    with conn:
+        _record_review_event(paths, decision, "deferred", report)
+    report.archived_path = _mark_and_archive(
+        decision.path,
+        ReviewStatus.DEFERRED,
+        decision.action,
+    )
+    return report
+
+
+def _invalid_payload_reason(path: Path) -> str | None:
+    try:
+        decision = parse_review_file(path)
+    except Exception as exc:
+        return f"parse_error: {exc}"
+
+    for error in decision.errors:
+        if error.startswith("Invalid JSON review payload:"):
+            return error
+    return None
 
 
 def _safe_kind_from_path(path: Path) -> ReviewKind:
@@ -339,11 +414,21 @@ def apply_decision(conn: sqlite3.Connection, decision: ReviewDecision) -> Review
         report.errors.extend(decision.errors)
         report.skipped = True
         return report
-    if decision.action in {ReviewAction.NONE, ReviewAction.DEFER}:
+    if decision.action is ReviewAction.NONE:
         report.skipped = True
         return report
 
     paths = BrainPaths(_infer_brain_root(decision.path))
+    if decision.action is ReviewAction.DEFER:
+        with conn:
+            _record_review_event(paths, decision, "deferred", report)
+        report.archived_path = _mark_and_archive(
+            decision.path,
+            ReviewStatus.DEFERRED,
+            decision.action,
+        )
+        report.skipped = True
+        return report
     if decision.action is ReviewAction.REJECT:
         return _reject_decision(conn, paths, decision, report)
     if decision.kind is ReviewKind.FACT_CONFLICT:
@@ -820,6 +905,26 @@ def _mark_and_archive(path: Path, status: ReviewStatus, action: ReviewAction) ->
     return target
 
 
+def _mark_and_quarantine(path: Path, reason: str) -> Path:
+    review_path = Path(path)
+    post = frontmatter.loads(review_path.read_text(encoding="utf-8"))
+    metadata = dict(post.metadata)
+    metadata["review_id"] = str(metadata.get("review_id") or review_path.stem)
+    metadata["kind"] = str(metadata.get("kind") or _kind_from_review_id(review_path.stem))
+    metadata["status"] = ReviewStatus.DEFERRED.value
+    metadata["decision"] = ReviewAction.NONE.value
+    metadata["quarantine_reason"] = reason
+    metadata["quarantined_at"] = _now_utc().isoformat()
+    rendered = frontmatter.dumps(frontmatter.Post(post.content, **metadata), sort_keys=False)
+    _write_lf(review_path, rendered)
+
+    quarantine_dir = _find_review_dir(review_path) / "quarantine"
+    quarantine_dir.mkdir(parents=True, exist_ok=True)
+    target = _unique_archive_path(quarantine_dir / review_path.name)
+    shutil.move(str(review_path), str(target))
+    return target
+
+
 def _mark_review_file(path: Path, status: ReviewStatus, action: ReviewAction) -> None:
     post = frontmatter.loads(path.read_text(encoding="utf-8"))
     metadata = dict(post.metadata)
@@ -1254,13 +1359,13 @@ def _checkpoint_and_close(conn: sqlite3.Connection) -> None:
         conn.close()
 
 
-def _auto_commit(paths: BrainPaths, applied_count: int) -> None:
+def _auto_commit(paths: BrainPaths, applied_count: int, *, message: str | None = None) -> None:
     config = load_config(paths.config_path)
     if not config.git.auto_commit:
         return
     commit(
         paths.root,
-        f"review: apply {applied_count} decisions",
+        message or f"review: apply {applied_count} decisions",
         paths=_commit_paths(paths),
     )
 

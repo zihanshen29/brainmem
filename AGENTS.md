@@ -191,6 +191,8 @@ CLI operation and preserve the same privacy and consent boundary.
 | Build embeddings | `mem reindex` | Provider-backed; requires explicit permission. |
 | Promote chat | `mem promote-chat` | Provider-backed and writes memory; requires explicit permission. |
 | Review queue | `mem review` | Inspect only unless the user explicitly asks to approve/reject/apply. |
+| Quarantine corrupt reviews | `mem review --quarantine-invalid --yes` | Local maintenance for undecided invalid payload files; does not approve/reject content. |
+| Prune mistaken stubs | `mem entity prune-stub` | Local destructive cleanup; use only when the user explicitly asks to remove generated stub entities. |
 | Repair indexes | `mem lint`, `mem rebuild` | Local deterministic maintenance unless a future option calls a provider. |
 
 MCP docstrings and skill instructions must emphasize when to call the tool, not

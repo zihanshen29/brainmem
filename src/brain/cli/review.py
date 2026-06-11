@@ -28,10 +28,34 @@ def review_command(
         bool,
         typer.Option("--apply", help="Apply checked pending review decisions."),
     ] = False,
+    quarantine_invalid: Annotated[
+        bool,
+        typer.Option(
+            "--quarantine-invalid",
+            help="Move undecided pending files with invalid payloads to review/quarantine.",
+        ),
+    ] = False,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", help="Skip confirmation prompts for maintenance actions."),
+    ] = False,
 ) -> None:
     """List, open, or apply pending review decisions."""
     root = _root(brain_root)
     try:
+        if quarantine_invalid:
+            if review_id is not None:
+                raise BrainError("Cannot combine a review id with --quarantine-invalid")
+            if apply_:
+                raise BrainError("Cannot combine --apply with --quarantine-invalid")
+            if not yes:
+                raise BrainError("--quarantine-invalid requires --yes")
+            report = quarantine_invalid_pending(root, kind=kind)
+            typer.echo(_format_quarantine_report(report))
+            for error in _list_value(report, "errors"):
+                typer.echo(f"- {error}", err=True)
+            return
+
         if apply_:
             if review_id is not None:
                 raise BrainError("Cannot combine a review id with --apply")
@@ -122,6 +146,15 @@ def apply_pending(root: Path, *, kind: str | None = None) -> Any:
     return pipeline_apply_pending(root, kind=kind)
 
 
+def quarantine_invalid_pending(root: Path, *, kind: str | None = None) -> Any:
+    try:
+        from brain.pipeline.review import quarantine_invalid_pending as pipeline_quarantine
+    except ImportError as exc:
+        raise BrainError("review pipeline is not available") from exc
+
+    return pipeline_quarantine(root, kind=kind)
+
+
 def _format_pending_item(root: Path, item: Any) -> str:
     review_id = _value(item, "review_id", "id")
     kind = _enum_value(_value(item, "kind"))
@@ -166,6 +199,18 @@ def _format_apply_report(report: Any) -> str:
     return " ".join(parts)
 
 
+def _format_quarantine_report(report: Any) -> str:
+    parts = [
+        "Review quarantine summary:",
+        f"quarantined={_value(report, 'quarantined', default=0)}",
+        f"skipped={_value(report, 'skipped', default=0)}",
+    ]
+    errors = _list_value(report, "errors")
+    if errors:
+        parts.append(f"errors={len(errors)}")
+    return " ".join(parts)
+
+
 def _decision_value(parsed: Any) -> str | None:
     decision = _value(parsed, "decision", "action")
     if decision is None:
@@ -191,13 +236,13 @@ def _list_value(item: Any, name: str) -> list[Any]:
     return list(value)
 
 
-def _value(item: Any, *names: str) -> Any:
+def _value(item: Any, *names: str, default: Any = None) -> Any:
     for name in names:
         if isinstance(item, dict) and name in item:
             return item[name]
         if hasattr(item, name):
             return getattr(item, name)
-    return None
+    return default
 
 
 def _enum_value(value: Any) -> Any:

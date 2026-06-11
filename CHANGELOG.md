@@ -9,6 +9,11 @@
   their structured payloads.
 - Added `--brain-root` to `mem lint` and `mem rebuild`, plus script-friendly
   `mem rebuild --backlinks --index` / `mem rebuild --all` derived index repair.
+- Added `mem entity prune-stub` for safe cleanup of mistaken generated stub
+  entity pages, and `mem review --quarantine-invalid --yes` for moving corrupt
+  undecided review files out of the pending queue.
+- Changed review `defer` handling to archive deferred items and record the
+  decision without applying fact/page mutations.
 - Added `mem-mcp-http` HTTP/SSE transport for opt-in remote MCP access.
 - Added optional shared-token authentication for HTTP/SSE requests.
 - Added a remote tool whitelist model for HTTP/SSE exposure, with high-risk

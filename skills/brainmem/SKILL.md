@@ -212,6 +212,8 @@ label privacy/write behavior.
 | Reindex | `mem reindex` | Embedding provider call; requires permission. |
 | Promote chat | `mem promote-chat` | Provider-backed durable write; requires permission. |
 | Review | `mem review` | Inspect/summarize by default; apply only on explicit instruction. |
+| Quarantine corrupt reviews | `mem review --quarantine-invalid --yes` | Local maintenance for undecided invalid payload files; does not approve/reject content. |
+| Prune mistaken stubs | `mem entity prune-stub` | Local destructive cleanup; use only after an explicit user request. |
 | Maintenance | `mem lint`, `mem rebuild` | Local deterministic maintenance unless options change that boundary. |
 
 ## Minimal Command Examples

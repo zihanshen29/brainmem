@@ -14,8 +14,9 @@ import brain.pipeline.entity_merge as entity_merge_pipeline
 from brain.cli.init import init_brain
 from brain.cli.main import app
 from brain.db.connection import connect
-from brain.models import Frontmatter, Page, PageType, Tier
+from brain.models import FactObjectType, Frontmatter, Page, PageType, Tier
 from brain.pages import parse_page, write_page
+from brain.pipeline.entity_prune import prune_stub_entities
 
 runner = CliRunner()
 ALICE_EVENT = "01KQA8R9KVCG906A0203VYEQF7"
@@ -226,6 +227,98 @@ def test_entity_merge_cli_brain_error_outputs_stderr_and_exit_one(
 
     assert result.exit_code == 1
     assert "Error: merge failed" in result.stderr
+
+
+def test_prune_stub_entities_deletes_junk_and_unlinks_references(brain_root: Path) -> None:
+    _write_page(
+        brain_root,
+        "entities/junk.md",
+        _entity_page(
+            slug="junk",
+            title="Junk",
+            compiled_truth="(stub - waiting for more evidence)",
+            timeline=[f"- 2026-04-01 [event:{ALICE_EVENT}]: Junk mentioned [[junk]]."],
+        ),
+    )
+    _write_page(
+        brain_root,
+        "projects/brain.md",
+        _project_page(compiled_truth="Project mentions [[junk|junk display]]."),
+    )
+    with connect(brain_root / "brain.db") as conn:
+        conn.execute(
+            """
+            INSERT INTO entities (id, type, title, page_path, tier, mention_count, first_seen, last_seen, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "junk",
+                "person",
+                "Junk",
+                "pages/entities/junk.md",
+                3,
+                1,
+                _utc(1).isoformat(),
+                _utc(1).isoformat(),
+                "{}",
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO facts (subject, predicate, object, object_type, asserted_at, source_event, confidence)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("junk", "resulted_in", "noise", FactObjectType.LITERAL.value, _utc(1).isoformat(), ALICE_EVENT, 0.8),
+        )
+        conn.execute(
+            """
+            INSERT INTO backlinks (from_page, to_entity, relation, line_number, extracted_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            ("brain-project", "junk", "mentions", 1, _utc(1).isoformat()),
+        )
+        conn.commit()
+
+    report = prune_stub_entities(brain_root, ["junk"], delete_facts=True, auto_commit=False)
+
+    assert report.pages_removed == ["pages/entities/junk.md"]
+    assert report.facts_deleted == 1
+    assert not (brain_root / "pages" / "entities" / "junk.md").exists()
+    assert _scalar(brain_root, "SELECT COUNT(*) FROM entities WHERE id = 'junk'") == 0
+    assert _scalar(brain_root, "SELECT COUNT(*) FROM facts WHERE subject = 'junk'") == 0
+    project_text = (brain_root / "pages" / "projects" / "brain.md").read_text(encoding="utf-8")
+    assert "junk display" in project_text
+    assert "[[junk" not in project_text
+
+
+def test_prune_stub_cli_accepts_brain_root(brain_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from brain.cli import entity as entity_cli
+
+    calls: list[tuple[Path, list[str], bool]] = []
+
+    def fake_prune(root: Path, *, slugs: list[str], delete_facts: bool) -> Any:
+        calls.append((root, slugs, delete_facts))
+        return {
+            "slugs": slugs,
+            "pages_removed": ["pages/entities/junk.md"],
+            "facts_deleted": 1,
+            "pages_rewritten": [],
+            "backlinks_rebuilt": 0,
+            "index_rebuilt": True,
+            "committed": False,
+        }
+
+    monkeypatch.setattr(entity_cli, "_run_prune_stub", fake_prune)
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["entity", "prune-stub", "junk", "--brain-root", str(brain_root), "--delete-facts", "--yes"],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [(brain_root, ["junk"], True)]
+    assert "Entity prune summary:" in result.stdout
 
 
 def _seed_merge_fixture(brain_root: Path) -> None:

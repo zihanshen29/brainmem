@@ -42,6 +42,7 @@ try:
         apply_pending,
         list_pending,
         parse_review_file,
+        quarantine_invalid_pending,
         resolve_review_path,
     )
 except ModuleNotFoundError as exc:
@@ -53,6 +54,7 @@ except ModuleNotFoundError as exc:
     apply_pending = None
     list_pending = None
     parse_review_file = None
+    quarantine_invalid_pending = None
     resolve_review_path = None
 
 requires_review_pipeline = pytest.mark.skipif(
@@ -247,6 +249,35 @@ def test_apply_pending_ignores_undecided_corrupt_payload(brain_root: Path) -> No
 
 
 @requires_review_pipeline
+def test_quarantine_invalid_pending_moves_undecided_corrupt_payload(brain_root: Path) -> None:
+    path = _write_review(
+        brain_root,
+        "2026-04-28_001_low_confidence_fact",
+        "low_confidence_fact",
+        "\n".join(
+            [
+                "# Old corrupt review",
+                "",
+                "```json",
+                '{"candidate": ',
+                "```",
+            ]
+        ),
+    )
+
+    report = quarantine_invalid_pending(brain_root)
+
+    target = brain_root / "review" / "quarantine" / path.name
+    assert report.quarantined == 1
+    assert report.files == ["review/quarantine/2026-04-28_001_low_confidence_fact.md"]
+    assert not path.exists()
+    assert target.exists()
+    text = target.read_text(encoding="utf-8")
+    assert "status: deferred" in text
+    assert "quarantine_reason:" in text
+
+
+@requires_review_pipeline
 def test_apply_new_entity_then_pending_fact_adds_fact_and_page(brain_root: Path) -> None:
     _write_review(
         brain_root,
@@ -426,7 +457,7 @@ def test_apply_tier_proposal_updates_entity_and_rewrites_page(
 
 
 @requires_review_pipeline
-def test_reject_archives_without_fact_write_and_defer_keeps_pending(brain_root: Path) -> None:
+def test_reject_and_defer_archive_without_fact_write(brain_root: Path) -> None:
     _write_review(
         brain_root,
         "2026-04-28_001_low_confidence_fact",
@@ -446,9 +477,13 @@ def test_reject_archives_without_fact_write_and_defer_keeps_pending(brain_root: 
 
     assert report.applied == 1
     assert report.skipped == 1
+    assert report.deferred == 1
+    assert report.archived == 2
     assert _scalar(brain_root, "SELECT COUNT(*) FROM facts") == 0
     assert (brain_root / "review" / "archive" / "2026-04-28_001_low_confidence_fact.md").exists()
-    assert (brain_root / "review" / "2026-04-28_002_low_confidence_fact.md").exists()
+    deferred = brain_root / "review" / "archive" / "2026-04-28_002_low_confidence_fact.md"
+    assert deferred.exists()
+    assert "status: deferred" in deferred.read_text(encoding="utf-8")
 
 
 @requires_review_pipeline
