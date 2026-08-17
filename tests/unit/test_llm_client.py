@@ -183,6 +183,43 @@ def test_extract_signal_invalid_json_raises_llm_error(monkeypatch: pytest.Monkey
         llm_client.extract_signal("Zihan is in the US.")
 
 
+def test_extract_signal_retries_invalid_json_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    responses: list[object] = ["{not valid json", signal_payload()]
+    calls = 0
+
+    def fake_extract(prompt: str, use_fast: bool = False) -> object:
+        nonlocal calls
+        calls += 1
+        return responses.pop(0)
+
+    monkeypatch.setattr(llm_client, "_extract_impl", fake_extract)
+
+    result = llm_client.extract_signal("Zihan is in the US.")
+
+    assert calls == 2
+    assert result.facts == [sample_candidate()]
+
+
+def test_extract_signal_retries_empty_provider_response_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def fake_extract(prompt: str, use_fast: bool = False) -> object:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise LLMError("LLM response did not contain text")
+        return signal_payload()
+
+    monkeypatch.setattr(llm_client, "_extract_impl", fake_extract)
+
+    result = llm_client.extract_signal("Zihan is in the US.")
+
+    assert calls == 2
+    assert result.facts == [sample_candidate()]
+
+
 def test_extract_signal_schema_invalid_preserves_validation_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -654,6 +691,7 @@ def test_extract_impl_dispatches_to_deepseek_chat_completions_create(
             "response_format": {"type": "json_object"},
             "max_tokens": llm_client.MAX_OUTPUT_TOKENS,
             "stream": False,
+            "extra_body": {"thinking": {"type": "disabled"}},
         },
     ]
 
@@ -692,3 +730,4 @@ def test_extract_impl_deepseek_uses_pro_model_by_default(
 
     assert result == '{"ok": true}'
     assert calls[0]["model"] == "deepseek-config-pro"
+    assert "extra_body" not in calls[0]
