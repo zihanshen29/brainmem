@@ -37,11 +37,13 @@ def test_parse_args_defaults_host_port_and_tools(tmp_path: Path) -> None:
 
     config = parse_args(["--brain-root", str(root)], env={})
 
+    assert DEFAULT_HOST == "127.0.0.1"
     assert config.brain_root == root
     assert config.host == DEFAULT_HOST
     assert config.port == DEFAULT_PORT
     assert config.token_env == DEFAULT_TOKEN_ENV
     assert config.enabled_tools == DEFAULT_REMOTE_TOOLS
+    assert config.allow_unauthenticated is False
     assert "brain_review_apply" not in config.enabled_tools
     assert config.enabled_tools.isdisjoint(OPT_IN_REMOTE_TOOLS)
 
@@ -186,3 +188,16 @@ def test_parse_args_splits_repeated_and_comma_tool_flags(tmp_path: Path) -> None
     assert "brain_procedure_new" in config.enabled_tools
     assert "brain_procedure_promote" in config.enabled_tools
     assert "brain_capture" not in config.enabled_tools
+
+
+def test_parse_args_requires_explicit_flag_for_unauthenticated_remote_mode(
+    tmp_path: Path,
+) -> None:
+    root = initialized_root(tmp_path)
+
+    config = parse_args(
+        ["--brain-root", str(root), "--allow-unauthenticated"],
+        env={},
+    )
+
+    assert config.allow_unauthenticated is True

@@ -26,7 +26,10 @@ def ingest_command(
         bool,
         typer.Option(
             "--dry-run",
-            help="Preview ingest work without writing files, database rows, events, cursors, or git commits.",
+            help=(
+                "Locally preview queued ingest items without calling a provider or writing "
+                "files, database rows, events, cursors, or git commits."
+            ),
         ),
     ] = False,
     source: Annotated[
@@ -52,6 +55,16 @@ def ingest_command(
             help="Skip automatic embedding reindex after a successful ingest.",
         ),
     ] = False,
+    requeue_failed: Annotated[
+        bool,
+        typer.Option(
+            "--requeue-failed",
+            help=(
+                "Move failed laundry back to the pending queue without ingesting it. "
+                "Existing pending files are never overwritten."
+            ),
+        ),
+    ] = False,
     verbose: Annotated[
         bool | None,
         typer.Option(
@@ -62,6 +75,21 @@ def ingest_command(
 ) -> None:
     """Ingest captured source material into the current brain repository."""
     try:
+        if requeue_failed:
+            if dry_run:
+                raise BrainError("--requeue-failed cannot be combined with --dry-run")
+            if source is IngestSource.EVENTS:
+                raise BrainError("--requeue-failed cannot be used with --source events")
+            report = _run_requeue_failed(
+                Path.cwd() if brain_root is None else brain_root,
+                limit=limit,
+            )
+            if verbose is not False:
+                typer.echo(_requeue_summary(report))
+                if verbose:
+                    _print_requeue_verbose(report)
+            return
+
         report = _run_ingest(
             Path.cwd() if brain_root is None else brain_root,
             source=source.value,
@@ -100,6 +128,12 @@ def _run_ingest(
     )
 
 
+def _run_requeue_failed(brain_root: Path, *, limit: int | None) -> Any:
+    from brain.pipeline.ingest import requeue_failed_laundry
+
+    return requeue_failed_laundry(brain_root, limit=limit)
+
+
 def _summary(report: Any) -> str:
     return (
         "Ingest summary: "
@@ -109,6 +143,18 @@ def _summary(report: Any) -> str:
         f"laundry_archived={report.laundry_archived} "
         f"dry_run={str(report.dry_run).lower()}"
     )
+
+
+def _requeue_summary(report: Any) -> str:
+    return f"Requeue summary: requeued={report.requeued}"
+
+
+def _print_requeue_verbose(report: Any) -> None:
+    if not report.files:
+        return
+    typer.echo("Requeued files:")
+    for path in report.files:
+        typer.echo(f"- {path}")
 
 
 def _print_verbose(report: Any) -> None:

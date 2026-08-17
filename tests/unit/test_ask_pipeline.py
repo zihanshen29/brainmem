@@ -60,6 +60,32 @@ def test_keyword_only_mode_does_not_need_embeddings(brain_root: Path) -> None:
     assert result.results[0].slug == "cv-coursework"
 
 
+@pytest.mark.parametrize(
+    ("query", "expected_slug"),
+    [
+        pytest.param("用户偏好", "memory-preferences", id="pure-chinese"),
+        pytest.param("用户偏好深色主题", "memory-preferences", id="chinese-phrase"),
+        pytest.param("BrainMem 主动召回", "memory-preferences", id="mixed-chinese-english"),
+        pytest.param("computer vision", "cv-coursework", id="english-regression"),
+    ],
+)
+def test_keyword_only_uses_shared_multilingual_tokenizer(
+    brain_root: Path,
+    query: str,
+    expected_slug: str,
+) -> None:
+    result = ask(brain_root, query, top=3, mode="keyword-only", debug=True)
+
+    assert result.results[0].slug == expected_slug
+    assert result.trace is not None
+    assert result.trace.query_tokens
+    if any("\u4e00" <= char <= "\u9fff" for char in query):
+        assert any(
+            any("\u4e00" <= char <= "\u9fff" for char in token)
+            for token in result.trace.query_tokens
+        )
+
+
 def test_hybrid_uses_vector_hits_when_embeddings_are_available(
     brain_root: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -314,6 +340,42 @@ def test_explain_calls_llm_with_retrieved_page_dicts(
 
 def _seed_pages(root: Path) -> None:
     now = datetime(2026, 4, 28, 12, 0, tzinfo=UTC)
+    _write_page(
+        root / "pages" / "concepts" / "brainmem-archive.md",
+        Page(
+            frontmatter=Frontmatter(
+                type=PageType.CONCEPT,
+                slug="brainmem-archive",
+                title="BrainMem Archive",
+                created=now,
+                updated=now,
+                tags=[],
+                aliases=[],
+                external_ids={},
+            ),
+            compiled_truth="BrainMem archives generic technical notes.",
+            timeline=[],
+            sources=["docs/cli.md"],
+        ),
+    )
+    _write_page(
+        root / "pages" / "concepts" / "memory-preferences.md",
+        Page(
+            frontmatter=Frontmatter(
+                type=PageType.CONCEPT,
+                slug="memory-preferences",
+                title="Memory Preferences",
+                created=now,
+                updated=now,
+                tags=[],
+                aliases=[],
+                external_ids={},
+            ),
+            compiled_truth="用户偏好使用深色主题。BrainMem 应当主动召回相关项目记忆。",
+            timeline=[],
+            sources=["docs/cli.md"],
+        ),
+    )
     _write_page(
         root / "pages" / "projects" / "cv-coursework.md",
         Page(

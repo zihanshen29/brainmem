@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, Field
 
-from brain.exceptions import BrainError
+from brain.exceptions import BrainError, ConfigError
 from brain.mcp import server_http, tools
 from brain.mcp.http_auth import TokenAuthMiddleware
 from brain.mcp.http_config import DEFAULT_REMOTE_TOOLS, HttpConfig
@@ -150,7 +150,7 @@ def test_unknown_error_logs_stack_and_returns_internal_error(
     assert str(brain_root) not in result[0][0].text
 
 
-def test_build_sse_app_warns_when_token_missing(
+def test_build_sse_app_allows_unauthenticated_loopback_when_token_missing(
     caplog: pytest.LogCaptureFixture,
     brain_root: Path,
 ) -> None:
@@ -161,17 +161,54 @@ def test_build_sse_app_warns_when_token_missing(
 
     assert isinstance(app, TokenAuthMiddleware)
     assert app.expected_token is None
-    assert "token is not configured" in caplog.text
+    assert app.allow_unauthenticated is True
+    assert "unauthenticated loopback access only" in caplog.text
+
+
+def test_build_sse_app_rejects_unauthenticated_non_loopback_bind(
+    brain_root: Path,
+) -> None:
+    config = HttpConfig(
+        brain_root=brain_root,
+        host="0.0.0.0",
+        token_env="BRAINMEM_TEST_TOKEN",
+    )
+
+    with pytest.raises(ConfigError, match="refusing unauthenticated HTTP/SSE bind"):
+        build_sse_app(config, env={})
+
+
+def test_build_sse_app_allows_explicit_unauthenticated_non_loopback_bind(
+    caplog: pytest.LogCaptureFixture,
+    brain_root: Path,
+) -> None:
+    config = HttpConfig(
+        brain_root=brain_root,
+        host="::",
+        token_env="BRAINMEM_TEST_TOKEN",
+        allow_unauthenticated=True,
+    )
+
+    with caplog.at_level("WARNING"):
+        app = build_sse_app(config, env={})
+
+    assert app.allow_unauthenticated is True
+    assert "--allow-unauthenticated was explicitly set" in caplog.text
 
 
 def test_build_sse_app_wraps_token_auth_when_token_set(brain_root: Path) -> None:
     app = build_sse_app(
-        HttpConfig(brain_root=brain_root, token_env="BRAINMEM_TEST_TOKEN"),
+        HttpConfig(
+            brain_root=brain_root,
+            host="0.0.0.0",
+            token_env="BRAINMEM_TEST_TOKEN",
+        ),
         env={"BRAINMEM_TEST_TOKEN": "secret"},
     )
 
     assert isinstance(app, TokenAuthMiddleware)
     assert app.expected_token == "secret"
+    assert app.allow_unauthenticated is False
 
 
 def test_mem_mcp_http_entry_point_exists() -> None:
@@ -216,3 +253,29 @@ def test_main_checks_concurrent_writes_before_start(
 
     assert calls[0] == ("warn", brain_root)
     assert calls[1][0:2] == ("run", "app")
+
+
+def test_main_refuses_unauthenticated_non_loopback_before_start(
+    monkeypatch: pytest.MonkeyPatch,
+    brain_root: Path,
+) -> None:
+    config = HttpConfig(
+        brain_root=brain_root,
+        host="0.0.0.0",
+        token_env="BRAINMEM_TEST_MISSING_TOKEN",
+    )
+    calls: list[str] = []
+
+    monkeypatch.delenv("BRAINMEM_TEST_MISSING_TOKEN", raising=False)
+    monkeypatch.setattr(server_http, "parse_args", lambda argv: config)
+    monkeypatch.setattr(
+        server_http,
+        "warn_if_possible_concurrent_writes",
+        lambda root: calls.append("warn"),
+    )
+    monkeypatch.setattr("uvicorn.run", lambda *args, **kwargs: calls.append("run"))
+
+    with pytest.raises(ConfigError, match="refusing unauthenticated HTTP/SSE bind"):
+        server_http.main(["--brain-root", str(brain_root)])
+
+    assert calls == []

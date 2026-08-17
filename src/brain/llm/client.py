@@ -36,6 +36,12 @@ DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-pro"
 DEFAULT_DEEPSEEK_FAST_MODEL = "deepseek-v4-flash"
 MAX_OUTPUT_TOKENS = 4096
+STRUCTURED_RESPONSE_ATTEMPTS = 2
+RETRYABLE_STRUCTURED_RESPONSE_ERRORS = {
+    "LLM response did not contain text",
+    "LLM response was not valid JSON",
+    "LLM response was not structured JSON",
+}
 
 
 @dataclass(frozen=True)
@@ -163,8 +169,15 @@ def promote_chat(
 
 
 def _request_structured_json(prompt: str, use_fast: bool = False) -> Any:
-    response = _invoke_with_retry(prompt, use_fast=use_fast)
-    return _parse_structured_response(response)
+    for attempt in range(STRUCTURED_RESPONSE_ATTEMPTS):
+        try:
+            response = _invoke_with_retry(prompt, use_fast=use_fast)
+            return _parse_structured_response(response)
+        except LLMError as exc:
+            is_last_attempt = attempt + 1 == STRUCTURED_RESPONSE_ATTEMPTS
+            if is_last_attempt or str(exc) not in RETRYABLE_STRUCTURED_RESPONSE_ERRORS:
+                raise
+    raise LLMError("LLM structured response failed")
 
 
 def _normalize_signal_payload(data: Any) -> Any:
@@ -307,7 +320,7 @@ def _resolve_llm_settings(preferred_provider: str | None = None) -> _LLMSettings
 def _extract_openai(prompt: str, settings: _LLMSettings, *, use_fast: bool) -> str:
     from openai import OpenAI
 
-    client_kwargs = {"api_key": settings.api_key} if settings.api_key else {}
+    client_kwargs: dict[str, Any] = {"api_key": settings.api_key} if settings.api_key else {}
     client = OpenAI(**client_kwargs)
     response = client.responses.create(
         model=settings.selected_model(use_fast=use_fast),
@@ -323,19 +336,29 @@ def _extract_openai(prompt: str, settings: _LLMSettings, *, use_fast: bool) -> s
 def _extract_deepseek(prompt: str, settings: _LLMSettings, *, use_fast: bool) -> str:
     from openai import OpenAI
 
-    client_kwargs: dict[str, str] = {}
+    client_kwargs: dict[str, Any] = {}
     if settings.api_key:
         client_kwargs["api_key"] = settings.api_key
     if settings.base_url:
         client_kwargs["base_url"] = settings.base_url
 
     client = OpenAI(**client_kwargs)
+    request_kwargs: dict[str, Any] = {
+        "model": settings.selected_model(use_fast=use_fast),
+        "messages": [{"role": "user", "content": prompt}],
+        "response_format": {"type": "json_object"},
+        "max_tokens": MAX_OUTPUT_TOKENS,
+        "stream": False,
+    }
+    if use_fast:
+        # DeepSeek V4 enables thinking by default. For bounded structured
+        # extraction, reasoning tokens can exhaust max_tokens before any JSON
+        # content is emitted. Non-thinking mode is the provider-supported path
+        # for reliable high-volume extraction and question answering.
+        request_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+
     response = client.chat.completions.create(
-        model=settings.selected_model(use_fast=use_fast),
-        messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"},
-        max_tokens=MAX_OUTPUT_TOKENS,
-        stream=False,
+        **request_kwargs,
     )
     content = response.choices[0].message.content
     if not isinstance(content, str) or not content.strip():
@@ -346,7 +369,7 @@ def _extract_deepseek(prompt: str, settings: _LLMSettings, *, use_fast: bool) ->
 def _extract_anthropic(prompt: str, settings: _LLMSettings, *, use_fast: bool) -> str:
     from anthropic import Anthropic
 
-    client_kwargs = {"api_key": settings.api_key} if settings.api_key else {}
+    client_kwargs: dict[str, Any] = {"api_key": settings.api_key} if settings.api_key else {}
     client = Anthropic(**client_kwargs)
     message = client.messages.create(
         model=settings.selected_model(use_fast=use_fast),

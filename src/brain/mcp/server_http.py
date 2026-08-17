@@ -7,13 +7,13 @@ import sqlite3
 from collections.abc import Callable, Mapping, Sequence
 from functools import wraps
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 from pydantic import ValidationError
 
-from brain.exceptions import BrainError
+from brain.exceptions import BrainError, ConfigError
 from brain.mcp import tools
-from brain.mcp.http_auth import TokenAuthMiddleware, token_from_env
+from brain.mcp.http_auth import TokenAuthMiddleware, is_loopback_host, token_from_env
 from brain.mcp.http_config import HttpConfig, parse_args
 from brain.mcp.server import TOOL_NAMES
 
@@ -22,6 +22,7 @@ _WINDOWS_PATH_RE = re.compile(
     r"(?<![\w])(?:[A-Za-z]:[\\/](?:[^\s:;,\]\[(){}<>\"']+[\\/]?)+|\\\\[^\s:;,\]\[(){}<>\"']+)"
 )
 _UNIX_PATH_RE = re.compile(r"(?<![\w])/(?:[^\s:;,\]\[(){}<>\"']+/)*[^\s:;,\]\[(){}<>\"']+")
+_FastMcpLogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
 
 def build_server(config: HttpConfig) -> Any:
@@ -38,7 +39,7 @@ def build_server(config: HttpConfig) -> Any:
         "brainmem",
         host=config.host,
         port=config.port,
-        log_level=config.log_level.upper(),
+        log_level=cast(_FastMcpLogLevel, config.log_level.upper()),
     )
     for name in TOOL_NAMES:
         if name not in config.enabled_tools:
@@ -54,11 +55,31 @@ def build_sse_app(
 ) -> TokenAuthMiddleware:
     """Build an authenticated ASGI app for the FastMCP SSE transport."""
     token = token_from_env(config.token_env, env)
+    allow_unauthenticated = False
     if not token:
-        LOGGER.warning(
-            "BrainMem HTTP token is not configured; requests will be unauthenticated."
-        )
-    return TokenAuthMiddleware(build_server(config).sse_app(), token)
+        if is_loopback_host(config.host):
+            allow_unauthenticated = True
+            LOGGER.warning(
+                "BrainMem HTTP token is not configured; allowing unauthenticated "
+                "loopback access only."
+            )
+        elif config.allow_unauthenticated:
+            allow_unauthenticated = True
+            LOGGER.warning(
+                "BrainMem HTTP authentication is disabled for a non-loopback bind "
+                "because --allow-unauthenticated was explicitly set."
+            )
+        else:
+            raise ConfigError(
+                "refusing unauthenticated HTTP/SSE bind to a non-loopback host; "
+                "configure the token environment variable or explicitly pass "
+                "--allow-unauthenticated"
+            )
+    return TokenAuthMiddleware(
+        build_server(config).sse_app(),
+        token,
+        allow_unauthenticated=allow_unauthenticated,
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -68,9 +89,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     import uvicorn
 
     config = parse_args(sys.argv[1:] if argv is None else argv)
+    app = build_sse_app(config)
     warn_if_possible_concurrent_writes(config.brain_root)
     uvicorn.run(
-        build_sse_app(config),
+        app,
         host=config.host,
         port=config.port,
         log_level=config.log_level,

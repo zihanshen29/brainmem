@@ -1,0 +1,19 @@
+{
+  "description": "BrainMem proactive local recall hook.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mem codex hook --top 3 --budget 1500 --max-query-chars 96 --context-limit 1200",
+            "commandWindows": "\"mem\" \"codex\" \"hook\" \"--top\" \"3\" \"--budget\" \"1500\" \"--max-query-chars\" \"96\" \"--context-limit\" \"1200\"",
+            "timeout": 5,
+            "statusMessage": "Checking relevant BrainMem context",
+            "additionalContextLimit": 1200
+          }
+        ]
+      }
+    ]
+  }
+}

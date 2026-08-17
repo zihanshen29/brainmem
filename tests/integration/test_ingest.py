@@ -16,7 +16,7 @@ from typer.testing import CliRunner
 from brain.cli.main import app
 from brain.db.connection import connect
 from brain.db.facts import add_fact
-from brain.exceptions import BrainError
+from brain.exceptions import BrainError, IngestError, LLMError
 from brain.ledger import append_event, read_all
 from brain.llm import client as llm_client
 from brain.models import (
@@ -36,6 +36,7 @@ VALID_ULID = "01KQA8R9KVCG906A0203VYEQF7"
 SECOND_ULID = "01KQA8VZMXBAV7AKF5JFB4KQ9C"
 
 runner = CliRunner()
+pytestmark = pytest.mark.usefixtures("fake_provider_key")
 
 
 def test_laundry_ingest_persists_fact_page_timeline_archive_and_cursor(
@@ -247,8 +248,7 @@ def test_unresolved_entity_fact_becomes_pending_fact_review(
     report = _run_ingest(brain_root, source="laundry")
 
     review_texts = [
-        path.read_text(encoding="utf-8")
-        for path in sorted((brain_root / "review").glob("*.md"))
+        path.read_text(encoding="utf-8") for path in sorted((brain_root / "review").glob("*.md"))
     ]
     assert report.processed == 1
     assert report.facts_added == 0
@@ -458,7 +458,169 @@ def test_laundry_ingest_failure_writes_review_and_moves_to_failed(
     assert not laundry_path.exists()
     assert failed_path.exists()
     assert len(review_files) == 1
-    assert "kind: ingest_error" in review_files[0].read_text(encoding="utf-8")
+    review_text = review_files[0].read_text(encoding="utf-8")
+    assert "kind: ingest_error" in review_text
+    assert "- failure_kind: content" in review_text
+
+
+def test_missing_provider_key_aborts_before_reviews_or_laundry_moves(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    laundry_path = _write_laundry(brain_root, "Alice started maintaining Brain.")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+    def unexpected_detector(*_args: object, **_kwargs: object) -> SignalExtraction:
+        raise AssertionError("provider preflight should run before detection")
+
+    ingest_module = importlib.import_module("brain.pipeline.ingest")
+    monkeypatch.setattr(ingest_module, "detect_signal", unexpected_detector)
+
+    with pytest.raises(IngestError, match="provider preflight failed"):
+        _run_ingest(brain_root, source="laundry")
+
+    assert laundry_path.exists()
+    assert not (brain_root / "laundry" / "failed" / laundry_path.name).exists()
+    assert list((brain_root / "review").glob("*.md")) == []
+    assert list(read_all(brain_root / "events.jsonl")) == []
+    assert _scalar(brain_root, "SELECT COUNT(*) FROM facts") == 0
+
+
+def test_invalid_provider_endpoint_aborts_before_detection(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    laundry_path = _write_laundry(brain_root, "Alice started maintaining Brain.")
+    config_path = brain_root / "config.toml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace(
+            'base_url = "https://api.deepseek.com"',
+            'base_url = "not-a-url"',
+            1,
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    def unexpected_detector(*_args: object, **_kwargs: object) -> SignalExtraction:
+        raise AssertionError("provider preflight should run before detection")
+
+    ingest_module = importlib.import_module("brain.pipeline.ingest")
+    monkeypatch.setattr(ingest_module, "detect_signal", unexpected_detector)
+
+    with pytest.raises(IngestError, match="base_url"):
+        _run_ingest(brain_root, source="laundry")
+
+    assert laundry_path.exists()
+    assert list((brain_root / "review").glob("*.md")) == []
+
+
+def test_transient_provider_failure_aborts_staged_batch_without_partial_writes(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    alice_path = _write_laundry(brain_root, "Alice started maintaining Brain.")
+    bob_path = brain_root / "laundry" / "bob.md"
+    bob_path.write_text("Bob started maintaining Brain.\n", encoding="utf-8", newline="\n")
+    detector_calls = 0
+
+    def fake_detect_signal(
+        text: str,
+        hint: dict[str, Any] | None = None,
+    ) -> SignalExtraction:
+        nonlocal detector_calls
+        del hint
+        detector_calls += 1
+        if text.startswith("Alice"):
+            return _alice_extraction()
+        try:
+            raise TimeoutError("provider timed out")
+        except TimeoutError as exc:
+            raise LLMError("LLM API call failed") from exc
+
+    ingest_module = importlib.import_module("brain.pipeline.ingest")
+    monkeypatch.setattr(ingest_module, "detect_signal", fake_detect_signal)
+
+    with pytest.raises(IngestError, match="temporary provider"):
+        _run_ingest(brain_root, source="laundry")
+
+    assert detector_calls == 2
+    assert alice_path.exists()
+    assert bob_path.exists()
+    assert list((brain_root / "laundry" / "processed").glob("*.md")) == []
+    assert list((brain_root / "laundry" / "failed").glob("*.md")) == []
+    assert list((brain_root / "review").glob("*.md")) == []
+    assert list(read_all(brain_root / "events.jsonl")) == []
+    assert _scalar(brain_root, "SELECT COUNT(*) FROM facts") == 0
+
+
+def test_transient_conflict_judgment_keeps_current_source_without_ingest_error(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _insert_fact(brain_root, object_value="designer", confidence=0.6)
+    laundry_path = _write_laundry(brain_root, "Alice is now an engineer.")
+    _install_signal_detector(
+        monkeypatch,
+        lambda: _alice_extraction(object_value="engineer", summary="Alice is now an engineer."),
+    )
+
+    def fail_conflict_judgment(*_args: object, **_kwargs: object) -> None:
+        try:
+            raise TimeoutError("conflict provider timed out")
+        except TimeoutError as exc:
+            raise LLMError("LLM API call failed") from exc
+
+    monkeypatch.setattr(llm_client, "judge_conflict", fail_conflict_judgment)
+
+    with pytest.raises(IngestError, match="temporary provider"):
+        _run_ingest(brain_root, source="laundry")
+
+    assert laundry_path.exists()
+    assert list((brain_root / "laundry" / "failed").glob("*.md")) == []
+    ingest_error_reviews = [
+        path
+        for path in (brain_root / "review").glob("*.md")
+        if "kind: ingest_error" in path.read_text(encoding="utf-8")
+    ]
+    assert ingest_error_reviews == []
+    assert _scalar(brain_root, "SELECT COUNT(*) FROM facts") == 1
+
+
+def test_requeue_failed_laundry_preserves_colliding_pending_files(
+    brain_root: Path,
+) -> None:
+    ingest_module = importlib.import_module("brain.pipeline.ingest")
+    pending = brain_root / "laundry" / "alice.md"
+    pending.write_text("already pending\n", encoding="utf-8", newline="\n")
+    failed_dir = brain_root / "laundry" / "failed"
+    nested_dir = failed_dir / "older"
+    nested_dir.mkdir(parents=True)
+    first_failed = failed_dir / "alice.md"
+    second_failed = nested_dir / "alice.md"
+    first_failed.write_text("first failure\n", encoding="utf-8", newline="\n")
+    second_failed.write_text("second failure\n", encoding="utf-8", newline="\n")
+
+    report = ingest_module.requeue_failed_laundry(brain_root)
+
+    assert report.requeued == 2
+    assert report.files == ["laundry/alice_1.md", "laundry/alice_2.md"]
+    assert pending.read_text(encoding="utf-8") == "already pending\n"
+    assert (brain_root / "laundry" / "alice_1.md").read_text(encoding="utf-8") == (
+        "first failure\n"
+    )
+    assert (brain_root / "laundry" / "alice_2.md").read_text(encoding="utf-8") == (
+        "second failure\n"
+    )
+    assert not first_failed.exists()
+    assert not second_failed.exists()
+
+
+def test_requeue_failed_laundry_requires_positive_limit(brain_root: Path) -> None:
+    ingest_module = importlib.import_module("brain.pipeline.ingest")
+
+    with pytest.raises(IngestError, match="limit must be positive"):
+        ingest_module.requeue_failed_laundry(brain_root, limit=0)
 
 
 def test_conflicting_fact_creates_fact_conflict_review(
@@ -515,6 +677,28 @@ def test_dry_run_does_not_write_db_files_archive_events_cursor_or_git(
     assert _git_output(brain_root, "status", "--short") == before_status
 
 
+def test_dry_run_is_local_and_does_not_require_provider_key(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    laundry_path = _write_laundry(brain_root, "Alice started maintaining Brain.")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+    def unexpected_detector(*_args: object, **_kwargs: object) -> SignalExtraction:
+        raise AssertionError("dry-run must not call the provider-backed detector")
+
+    ingest_module = importlib.import_module("brain.pipeline.ingest")
+    monkeypatch.setattr(ingest_module, "detect_signal", unexpected_detector)
+
+    report = _run_ingest(brain_root, source="laundry", dry_run=True)
+
+    assert report.dry_run is True
+    assert report.processed == 1
+    assert report.errors == []
+    assert laundry_path.exists()
+    assert list((brain_root / "review").glob("*.md")) == []
+
+
 def test_cli_ingest_dry_run_and_source_laundry_output_summary(
     brain_root: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -565,6 +749,31 @@ def test_cli_ingest_no_auto_reindex_skips_reindex(
     assert result.exit_code == 0
     assert "Ingest summary:" in result.stdout
     assert reindex_calls == []
+
+
+def test_cli_ingest_requeue_failed_is_local_and_does_not_overwrite(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pending = brain_root / "laundry" / "alice.md"
+    pending.write_text("pending\n", encoding="utf-8", newline="\n")
+    failed_dir = brain_root / "laundry" / "failed"
+    failed_dir.mkdir(parents=True)
+    failed = failed_dir / "alice.md"
+    failed.write_text("failed\n", encoding="utf-8", newline="\n")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+    result = runner.invoke(
+        app,
+        ["ingest", "--brain-root", str(brain_root), "--requeue-failed", "--verbose"],
+    )
+
+    assert result.exit_code == 0
+    assert "Requeue summary: requeued=1" in result.stdout
+    assert "laundry/alice_1.md" in result.stdout
+    assert pending.read_text(encoding="utf-8") == "pending\n"
+    assert (brain_root / "laundry" / "alice_1.md").read_text(encoding="utf-8") == ("failed\n")
+    assert not failed.exists()
 
 
 def test_cli_ingest_brain_error_outputs_stderr_and_exit_one(
@@ -740,7 +949,12 @@ def _procedure_extraction(*, confidence: float) -> SignalExtraction:
     )
 
 
-def _insert_fact(brain_root: Path, *, object_value: str) -> None:
+def _insert_fact(
+    brain_root: Path,
+    *,
+    object_value: str,
+    confidence: float = 0.9,
+) -> None:
     with connect(brain_root / "brain.db") as conn:
         add_fact(
             conn,
@@ -754,7 +968,7 @@ def _insert_fact(brain_root: Path, *, object_value: str) -> None:
                 asserted_at=datetime(2026, 4, 28, 12, 0, tzinfo=UTC),
                 source_event=VALID_ULID,
                 source_ref="events.jsonl",
-                confidence=0.9,
+                confidence=confidence,
             ),
         )
         conn.commit()

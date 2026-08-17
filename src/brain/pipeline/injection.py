@@ -9,10 +9,11 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from brain.exceptions import BrainError
-from brain.models import PageType
+from brain.models import Page, PageType
 from brain.pages import parse_page
 from brain.paths import BrainPaths
 from brain.pipeline.ask import AskMode, ask
+from brain.pipeline.retrieval.keyword import tokenize
 
 OutputFormat = Literal["markdown", "text"]
 
@@ -231,11 +232,11 @@ def _read_snapshot(path: Path) -> str | None:
     return content or None
 
 
-def _included_pages(paths: BrainPaths, slugs: Sequence[str]) -> list[tuple[Path, object]]:
+def _included_pages(paths: BrainPaths, slugs: Sequence[str]) -> list[tuple[Path, Page]]:
     wanted = [slug.strip() for slug in slugs if slug.strip()]
     if not wanted:
         return []
-    by_slug: dict[str, tuple[Path, object]] = {}
+    by_slug: dict[str, tuple[Path, Page]] = {}
     if paths.pages_dir.exists():
         for page_path in sorted(paths.pages_dir.rglob("*.md")):
             if page_path.name in {"index.md", "log.md"}:
@@ -361,7 +362,6 @@ def _render_result(
     fragments: list[InjectionFragment],
     skipped: list[SkippedFragment],
     body: list[str],
-    allow_body_drop: bool = True,
 ) -> tuple[str, int]:
     builders = [
         lambda used: _render_verbose(
@@ -381,24 +381,27 @@ def _render_result(
             skipped=skipped,
             body=body,
         ),
-        lambda used: _render_minimal(output_format, budget=budget, used_tokens=used),
     ]
-    if allow_body_drop:
-        builders.insert(
-            -1,
-            lambda used: _render_compact(
-                output_format,
-                budget=budget,
-                used_tokens=used,
-                fragments=fragments,
-                skipped=skipped,
-                body=[],
-            ),
-        )
     for builder in builders:
         content, used_tokens = _with_accurate_budget(builder)
         if used_tokens <= budget:
             return content, used_tokens
+
+    truncated = _render_final_truncated_compact(
+        output_format,
+        budget=budget,
+        fragments=fragments,
+        skipped=skipped,
+        body=body,
+    )
+    if truncated is not None:
+        return truncated
+
+    minimal, minimal_tokens = _with_accurate_budget(
+        lambda used: _render_minimal(output_format, budget=budget, used_tokens=used)
+    )
+    if minimal_tokens <= budget:
+        return minimal, minimal_tokens
 
     return ".\n", estimate_tokens(".\n")
 
@@ -468,34 +471,88 @@ def _render_compact(
     skipped: list[SkippedFragment],
     body: list[str],
 ) -> str:
-    fragment_slugs = ", ".join(fragment.slug for fragment in fragments) or "none"
+    return _render_compact_prepared(
+        output_format,
+        budget=budget,
+        used_tokens=used_tokens,
+        fragments=fragments,
+        skipped=skipped,
+        body=[_compact_fragment(text) for text in body],
+    )
+
+
+def _render_compact_prepared(
+    output_format: OutputFormat,
+    *,
+    budget: int,
+    used_tokens: int,
+    fragments: list[InjectionFragment],
+    skipped: list[SkippedFragment],
+    body: list[str],
+) -> str:
     skipped_slugs = ", ".join(fragment.slug for fragment in skipped)
     if output_format == "markdown":
         lines = [
             "# BrainMem Injection",
             f"- Budget used: {used_tokens}/{budget} estimated tokens",
-            f"- Fragments: {len(fragments)} ({fragment_slugs})",
         ]
         if skipped:
             lines.append(f"- Skipped: {skipped_slugs}")
         if any(fragment.truncated for fragment in fragments):
             lines.append("- Truncated: yes")
         if body:
-            lines.extend(["", *[_compact_fragment(text) for text in body]])
+            lines.extend(["", *body])
         return "\n".join(lines).rstrip() + "\n"
 
     lines = [
         "BrainMem Injection",
         f"Budget used: {used_tokens}/{budget} estimated tokens",
-        f"Fragments: {len(fragments)} ({fragment_slugs})",
     ]
     if skipped:
         lines.append(f"Skipped: {skipped_slugs}")
     if any(fragment.truncated for fragment in fragments):
         lines.append("Truncated: yes")
     if body:
-        lines.extend(["", *[_compact_fragment(text) for text in body]])
+        lines.extend(["", *body])
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _render_final_truncated_compact(
+    output_format: OutputFormat,
+    *,
+    budget: int,
+    fragments: list[InjectionFragment],
+    skipped: list[SkippedFragment],
+    body: list[str],
+) -> tuple[str, int] | None:
+    """Shrink the final body after skipped-fragment metadata is known."""
+    compact_body = "\n\n".join(_compact_fragment(text) for text in body if text.strip())
+    if not compact_body:
+        return None
+
+    suffix = "\n[output truncated to fit token budget]"
+    low = 0
+    high = len(compact_body)
+    best: tuple[str, int] | None = None
+    while low <= high:
+        mid = (low + high) // 2
+        candidate = compact_body[:mid].rstrip() + suffix
+        content, used_tokens = _with_accurate_budget(
+            lambda used, candidate=candidate: _render_compact_prepared(
+                output_format,
+                budget=budget,
+                used_tokens=used,
+                fragments=fragments,
+                skipped=skipped,
+                body=[candidate],
+            )
+        )
+        if used_tokens <= budget:
+            best = content, used_tokens
+            low = mid + 1
+        else:
+            high = mid - 1
+    return best
 
 
 def _render_minimal(
@@ -522,10 +579,23 @@ def _with_accurate_budget(builder) -> tuple[str, int]:
 
 
 def _compact_fragment(text: str) -> str:
+    # Compact mode may remove blank lines and outer bundle metadata, but it must
+    # never discard the memory body. Budget fitting relies on this renderer, so
+    # dropping the body here would let an oversized fragment appear to fit and
+    # later produce a source-only injection.
     lines = [line for line in text.splitlines() if line.strip()]
+    if not lines:
+        return ""
     source = next((line for line in lines if "Source:" in line), "")
-    marker = "truncated to fit token budget" if "truncated to fit token budget" in text else ""
-    return " ".join(line for line in [source, marker] if line)
+    try:
+        truth_index = lines.index("Compiled truth:")
+    except ValueError:
+        return "\n".join(lines)
+    return "\n".join(
+        line
+        for line in [lines[0], source, "Compiled truth:", *lines[truth_index + 1 :]]
+        if line
+    )
 
 
 def _render_fragment(
@@ -586,6 +656,7 @@ def _truncate_to_final_budget(
     body: list[str],
 ) -> str | None:
     suffix = "\n[truncated to fit token budget]"
+    text = _prioritize_query_paragraphs(text, query)
     low = 0
     high = len(text)
     best: str | None = None
@@ -623,6 +694,34 @@ def _truncate_to_final_budget(
         else:
             high = mid - 1
     return best
+
+
+def _prioritize_query_paragraphs(text: str, query: str) -> str:
+    """Move matching paragraphs first only when a fragment must be truncated."""
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
+    if len(paragraphs) < 2:
+        return text
+
+    query_tokens = {token for token in tokenize(query) if token.isalnum()}
+    if not query_tokens:
+        return text
+
+    ranked: list[tuple[int, int, str]] = []
+    unmatched: list[tuple[int, str]] = []
+    for index, paragraph in enumerate(paragraphs):
+        overlap = len(query_tokens & {token for token in tokenize(paragraph) if token.isalnum()})
+        if overlap:
+            ranked.append((-overlap, index, paragraph))
+        else:
+            unmatched.append((index, paragraph))
+
+    if not ranked:
+        return text
+    ranked.sort()
+    return "\n\n".join(
+        [paragraph for _, _, paragraph in ranked]
+        + [paragraph for _, paragraph in unmatched]
+    )
 
 
 def _fits_budget(

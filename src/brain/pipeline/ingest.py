@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import sqlite3
 import traceback
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 import ulid
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from brain.config import Config, load_config
 from brain.db.backlinks import replace_backlinks_for_page
@@ -19,7 +24,7 @@ from brain.db.connection import connect, sqlite_uri
 from brain.db.entities import get_entity
 from brain.db.facts import add_fact, find_active_facts, supersede
 from brain.db.tier import propose_tier
-from brain.exceptions import IngestError
+from brain.exceptions import ConfigError, IngestError, LLMError
 from brain.ledger import append_event, read_all
 from brain.models import (
     Entity,
@@ -74,6 +79,7 @@ REVIEW_DECISION_SECTION = """## Decision
 [ ] defer
 """
 FAILED_LAUNDRY_DIR_NAME = "failed"
+BRAIN_CONFIG_ENV = "BRAIN_CONFIG"
 TRANSIENT_ENTITY_PAGE_MIN_MENTIONS = 2
 TRANSIENT_ENTITY_TERMS = {
     "draft",
@@ -97,6 +103,7 @@ TRANSIENT_ENTITY_PATTERNS = (
     re.compile(r"\.(?:md|txt|json|toml|ya?ml|py|ts|tsx|js|jsx|pdf|docx?)$", re.IGNORECASE),
 )
 
+
 class IngestReport(BaseModel):
     """Summary of one ingest run."""
 
@@ -112,6 +119,23 @@ class IngestReport(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+class RequeueReport(BaseModel):
+    """Summary of failed laundry moved back to the pending queue."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    requeued: int = 0
+    files: list[str] = Field(default_factory=list)
+
+
+class IngestFailureKind(StrEnum):
+    """Operational scope of a failure raised while processing one item."""
+
+    CONTENT = "content"
+    INFRASTRUCTURE = "infrastructure"
+    TRANSIENT = "transient"
+
+
 @dataclass(frozen=True)
 class IngestItem:
     source: Literal["laundry", "events"]
@@ -119,6 +143,13 @@ class IngestItem:
     text: str
     event: Event
     laundry_path: Path | None = None
+
+
+@dataclass(frozen=True)
+class StagedExtraction:
+    item: IngestItem
+    extraction: SignalExtraction | None = None
+    error: Exception | None = None
 
 
 @dataclass
@@ -197,36 +228,66 @@ def ingest(
     report = IngestReport(dry_run=dry_run)
 
     if dry_run:
-        return _run_dry_ingest(paths, source, limit, report, event_id=event_id)
+        return _run_dry_ingest(
+            paths,
+            source,
+            limit,
+            report,
+            event_id=event_id,
+        )
 
     conn = _connect_for_ingest(paths.db_path, dry_run=dry_run)
     try:
         items = _collect_items(paths, conn, source, limit, event_id=event_id)
+        if items:
+            _preflight_ingest_provider(config)
+
+        with _configured_llm_path(paths.config_path):
+            staged = _stage_extractions(items)
+
         review_writer = ReviewWriter.create(paths, report)
 
-        for item in items:
+        for staged_item in staged:
+            item = staged_item.item
+            if staged_item.error is not None:
+                _record_item_content_failure(
+                    paths,
+                    conn,
+                    item,
+                    staged_item.error,
+                    review_writer,
+                    report,
+                )
+                continue
+
+            if staged_item.extraction is None:
+                raise IngestError(f"Staged extraction is missing for {item.source_ref}")
+
             try:
-                extraction = _detect_item_signal(item)
-                with conn:
+                with _configured_llm_path(paths.config_path), conn:
                     result = _apply_extraction(
                         conn=conn,
                         paths=paths,
                         config=config,
                         item=item,
-                        extraction=extraction,
+                        extraction=staged_item.extraction,
                         review_writer=review_writer,
                         report=report,
                     )
 
                 _record_item_success(paths, conn, item, result, report)
             except Exception as exc:
-                report.errors.append(f"{item.source_ref}: {exc}")
-                if not dry_run:
-                    _write_ingest_error_review(review_writer, item, exc)
-                    if item.source == "events":
-                        _set_cursor(conn, "events", item.event.id)
-                    elif item.laundry_path is not None:
-                        _archive_failed_laundry_item(paths, item.laundry_path)
+                failure_kind = _classify_ingest_failure(exc)
+                if failure_kind is not IngestFailureKind.CONTENT:
+                    raise _batch_ingest_error(item, exc, failure_kind) from exc
+                _record_item_content_failure(
+                    paths,
+                    conn,
+                    item,
+                    exc,
+                    review_writer,
+                    report,
+                )
 
         _finalize_run(
             conn,
@@ -242,6 +303,40 @@ def ingest(
     return _sorted_report(report)
 
 
+def requeue_failed_laundry(
+    brain_root: Path,
+    *,
+    limit: int | None = None,
+) -> RequeueReport:
+    """Move failed laundry back to the pending queue without overwriting files.
+
+    Requeue is deliberately separate from provider-backed ingest. The caller can
+    inspect the restored files and invoke ingest explicitly when ready.
+    """
+    if limit is not None and limit <= 0:
+        raise IngestError("limit must be positive")
+
+    paths = BrainPaths(Path(brain_root))
+    failed_dir = paths.laundry_dir / FAILED_LAUNDRY_DIR_NAME
+    if not failed_dir.exists():
+        return RequeueReport()
+
+    failed_files = sorted(path for path in failed_dir.rglob("*") if path.is_file())
+    if limit is not None:
+        failed_files = failed_files[:limit]
+
+    paths.laundry_dir.mkdir(parents=True, exist_ok=True)
+    report = RequeueReport()
+    for source_path in failed_files:
+        target = _unique_processed_path(paths.laundry_dir / source_path.name)
+        shutil.move(str(source_path), str(target))
+        report.requeued += 1
+        report.files.append(target.relative_to(paths.root).as_posix())
+
+    report.files.sort()
+    return report
+
+
 def _run_dry_ingest(
     paths: BrainPaths,
     source: str,
@@ -251,13 +346,189 @@ def _run_dry_ingest(
     event_id: str | None = None,
 ) -> IngestReport:
     items = _collect_dry_items(paths, source, limit, event_id=event_id)
+    report.processed = len(items)
+    return _sorted_report(report)
+
+
+def _stage_extractions(items: list[IngestItem]) -> list[StagedExtraction]:
+    staged: list[StagedExtraction] = []
     for item in items:
         try:
-            _detect_item_signal(item)
-            report.processed += 1
-        except Exception as exc:  # per-item ingest failures are reportable
-            report.errors.append(f"{item.source_ref}: {exc}")
-    return _sorted_report(report)
+            extraction = _detect_item_signal(item)
+        except Exception as exc:
+            failure_kind = _classify_ingest_failure(exc)
+            if failure_kind is not IngestFailureKind.CONTENT:
+                raise _batch_ingest_error(item, exc, failure_kind) from exc
+            staged.append(StagedExtraction(item=item, error=exc))
+            continue
+        staged.append(StagedExtraction(item=item, extraction=extraction))
+    return staged
+
+
+def _record_item_content_failure(
+    paths: BrainPaths,
+    conn: sqlite3.Connection,
+    item: IngestItem,
+    exc: Exception,
+    review_writer: ReviewWriter,
+    report: IngestReport,
+) -> None:
+    report.errors.append(f"{item.source_ref}: {exc}")
+    _write_ingest_error_review(
+        review_writer,
+        item,
+        exc,
+        failure_kind=IngestFailureKind.CONTENT,
+    )
+    if item.source == "events":
+        _set_cursor(conn, "events", item.event.id)
+    elif item.laundry_path is not None:
+        _archive_failed_laundry_item(paths, item.laundry_path)
+
+
+def _preflight_ingest_provider(config: Config) -> None:
+    if config.deepseek is not None:
+        _require_provider_key("deepseek", config.deepseek.api_key_env)
+        _validate_provider_endpoint("deepseek", config.deepseek.base_url)
+        return
+    if config.openai is not None:
+        _require_provider_key("openai", config.openai.api_key_env)
+        return
+    if config.anthropic is not None:
+        _require_provider_key("anthropic", config.anthropic.api_key_env)
+        return
+    raise IngestError("Ingest provider preflight failed: no LLM provider is configured")
+
+
+def _require_provider_key(provider: str, env_name: str) -> None:
+    if os.environ.get(env_name, "").strip():
+        return
+    raise IngestError(
+        "Ingest provider preflight failed: "
+        f"{provider} API key environment variable {env_name!r} is not set. "
+        "No source items were processed and laundry remains pending."
+    )
+
+
+def _validate_provider_endpoint(provider: str, endpoint: str) -> None:
+    try:
+        parsed = urlsplit(endpoint)
+        has_host = bool(parsed.hostname)
+    except ValueError as exc:
+        raise IngestError(
+            f"Ingest provider preflight failed: {provider} base_url is invalid"
+        ) from exc
+
+    if (
+        endpoint != endpoint.strip()
+        or parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or not has_host
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise IngestError(
+            f"Ingest provider preflight failed: {provider} base_url must be a valid "
+            "HTTP(S) endpoint without embedded credentials"
+        )
+
+
+@contextmanager
+def _configured_llm_path(config_path: Path) -> Iterator[None]:
+    previous = os.environ.get(BRAIN_CONFIG_ENV)
+    os.environ[BRAIN_CONFIG_ENV] = str(config_path)
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(BRAIN_CONFIG_ENV, None)
+        else:
+            os.environ[BRAIN_CONFIG_ENV] = previous
+
+
+def _classify_ingest_failure(exc: Exception) -> IngestFailureKind:
+    chain = _exception_chain(exc)
+
+    if any(
+        isinstance(error, (ValidationError, json.JSONDecodeError, UnicodeError)) for error in chain
+    ):
+        return IngestFailureKind.CONTENT
+
+    messages = " ".join(str(error).lower() for error in chain)
+    if any(isinstance(error, LLMError) for error in chain):
+        if any(
+            marker in messages
+            for marker in (
+                "response was not valid json",
+                "response was not structured json",
+                "response did not contain text",
+                "failed the required schema",
+            )
+        ):
+            return IngestFailureKind.CONTENT
+        if _is_transient_provider_failure(chain):
+            return IngestFailureKind.TRANSIENT
+        return IngestFailureKind.INFRASTRUCTURE
+
+    if any(isinstance(error, (TimeoutError, ConnectionError)) for error in chain):
+        return IngestFailureKind.TRANSIENT
+    if any(
+        isinstance(error, (ConfigError, ModuleNotFoundError, sqlite3.OperationalError, OSError))
+        for error in chain
+    ):
+        return IngestFailureKind.INFRASTRUCTURE
+    return IngestFailureKind.CONTENT
+
+
+def _is_transient_provider_failure(chain: list[BaseException]) -> bool:
+    transient_names = (
+        "apiconnectionerror",
+        "apitimeouterror",
+        "connectionerror",
+        "internalservererror",
+        "ratelimiterror",
+        "serviceunavailable",
+        "timeout",
+    )
+    for error in chain:
+        if any(marker in type(error).__name__.lower() for marker in transient_names):
+            return True
+        status_code = getattr(error, "status_code", None)
+        if isinstance(status_code, int) and (
+            status_code in {408, 409, 425, 429} or status_code >= 500
+        ):
+            return True
+    return False
+
+
+def _exception_chain(exc: BaseException) -> list[BaseException]:
+    chain: list[BaseException] = []
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        chain.append(current)
+        seen.add(id(current))
+        if current.__cause__ is not None:
+            current = current.__cause__
+        elif not current.__suppress_context__:
+            current = current.__context__
+        else:
+            current = None
+    return chain
+
+
+def _batch_ingest_error(
+    item: IngestItem,
+    exc: Exception,
+    failure_kind: IngestFailureKind,
+) -> IngestError:
+    label = (
+        "temporary provider" if failure_kind is IngestFailureKind.TRANSIENT else "infrastructure"
+    )
+    return IngestError(
+        f"Ingest stopped on {label} failure while processing {item.source_ref}: {exc}. "
+        "The source item remains pending; no ingest-error review was created for it."
+    )
 
 
 def _collect_items(
@@ -358,7 +629,9 @@ def _collect_event_items(
             continue
         if not _event_has_payload(event):
             if event_id is not None:
-                raise IngestError(f"Event is not ingestible because it has no raw payload: {event.id}")
+                raise IngestError(
+                    f"Event is not ingestible because it has no raw payload: {event.id}"
+                )
             _set_cursor(conn, "events", event.id)
             continue
         text = _event_text(paths.root, event)
@@ -386,7 +659,9 @@ def _collect_event_items_without_cursor(
             continue
         if not _event_has_payload(event):
             if event_id is not None:
-                raise IngestError(f"Event is not ingestible because it has no raw payload: {event.id}")
+                raise IngestError(
+                    f"Event is not ingestible because it has no raw payload: {event.id}"
+                )
             continue
         text = _event_text(paths.root, event)
         items.append(
@@ -763,8 +1038,7 @@ def _touch_subject_page(
 
 def _should_delay_stub_page(entity: Entity) -> bool:
     return (
-        _is_transient_entity(entity)
-        and entity.mention_count < TRANSIENT_ENTITY_PAGE_MIN_MENTIONS
+        _is_transient_entity(entity) and entity.mention_count < TRANSIENT_ENTITY_PAGE_MIN_MENTIONS
     )
 
 
@@ -1005,6 +1279,8 @@ def _write_ingest_error_review(
     review_writer: ReviewWriter,
     item: IngestItem,
     exc: Exception,
+    *,
+    failure_kind: IngestFailureKind,
 ) -> None:
     body = "\n".join(
         [
@@ -1014,6 +1290,7 @@ def _write_ingest_error_review(
             f"- source_ref: {item.source_ref}",
             f"- event_id: {item.event.id}",
             f"- event_kind: {item.event.kind.value}",
+            f"- failure_kind: {failure_kind.value}",
             f"- error_type: {type(exc).__name__}",
             f"- error: {exc}",
             "",
