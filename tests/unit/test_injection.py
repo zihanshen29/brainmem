@@ -8,7 +8,7 @@ import pytest
 from brain.cli.init import init_brain
 from brain.exceptions import BrainError
 from brain.models import Frontmatter, Page, PageType, Tier
-from brain.pages import write_page
+from brain.pages import parse_page, write_page
 from brain.pipeline.injection import estimate_tokens, inject
 
 
@@ -50,6 +50,36 @@ def test_inject_small_budget_truncates_and_skips(brain_root: Path) -> None:
     assert "Skipped: brain-injection" in result.content
     assert any("truncated" in warning for warning in result.warnings)
     assert any("skipped" in warning for warning in result.warnings)
+
+
+def test_inject_truncated_fragment_keeps_query_relevant_memory_body(brain_root: Path) -> None:
+    page_path = brain_root / "pages" / "entities" / "alice.md"
+    page = parse_page(page_path)
+    write_page(
+        page_path,
+        page.model_copy(
+            update={
+                "compiled_truth": (
+                    ("Unrelated background material. " * 120)
+                    + "\n\nQUERY_RELEVANT_MARKER: Alice memory injection preference."
+                )
+            }
+        ),
+    )
+
+    result = inject(
+        brain_root,
+        "Alice memory injection",
+        budget=120,
+        mode="keyword-only",
+        top=1,
+        include_snapshot=False,
+    )
+
+    assert result.used_tokens <= 120
+    assert result.fragments[0].truncated is True
+    assert "QUERY_RELEVANT_MARKER" in result.content
+    assert "Compiled truth:" in result.content
 
 
 def test_inject_tiny_budget_uses_final_content_budget(brain_root: Path) -> None:
