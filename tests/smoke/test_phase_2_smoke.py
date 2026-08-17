@@ -27,13 +27,17 @@ class FakeEmbeddingClient:
         return [[1.0] * DIMENSION for _ in texts]
 
 
-def test_phase_2_smoke_playbook(tmp_path: Path, monkeypatch) -> None:
+def test_phase_2_smoke_playbook(tmp_path: Path, monkeypatch, fake_provider_key: None) -> None:
     runner = CliRunner()
     root = tmp_path / "brain-smoke"
     import_dir = tmp_path / "import-fixture"
     import_dir.mkdir()
-    (import_dir / "note1.md").write_text("# Note 1\nThis is the first imported note.\n", encoding="utf-8")
-    (import_dir / "note2.md").write_text("# Note 2\nThis is the second imported note.\n", encoding="utf-8")
+    (import_dir / "note1.md").write_text(
+        "# Note 1\nThis is the first imported note.\n", encoding="utf-8"
+    )
+    (import_dir / "note2.md").write_text(
+        "# Note 2\nThis is the second imported note.\n", encoding="utf-8"
+    )
     _patch_llm(monkeypatch)
     _patch_embeddings(monkeypatch)
 
@@ -61,14 +65,14 @@ def test_phase_2_smoke_playbook(tmp_path: Path, monkeypatch) -> None:
     assert estimate.exit_code == 0, estimate.stderr
     assert "files=2" in estimate.stdout
 
-    imported = runner.invoke(app, ["import", "--brain-root", str(root), str(import_dir), "--kind", "md", "--yes"])
+    imported = runner.invoke(
+        app, ["import", "--brain-root", str(root), str(import_dir), "--kind", "md", "--yes"]
+    )
     assert imported.exit_code == 0, imported.stderr
     assert "processed=2" in imported.stdout
 
     laundry_files = [
-        path
-        for path in (root / "laundry").rglob("*.md")
-        if "processed" not in path.parts
+        path for path in (root / "laundry").rglob("*.md") if "processed" not in path.parts
     ]
     assert len(laundry_files) >= 2
 

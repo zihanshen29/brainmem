@@ -28,7 +28,7 @@ or when you do not need cross-device access.
   Claude Desktop / Cursor / Codex / Cline
         |
         |  MCP over HTTP/SSE
-        |  optional X-Brainmem-Token header
+        |  X-Brainmem-Token header (required off loopback by default)
         v
 [BrainMem HTTP server]
   mem-mcp-http
@@ -100,12 +100,16 @@ accepted from clients.
 | `--host <host>` | `BRAINMEM_HOST` | Bind address. Use `0.0.0.0` for private-network access or loopback for local testing. |
 | `--port <port>` | `BRAINMEM_PORT` | HTTP/SSE listening port. |
 | `--token-env <name>` | n/a | Name of the environment variable that stores the shared token. |
+| `--allow-unauthenticated` | n/a | Explicitly allow tokenless non-loopback access. Unsafe unless an outer trusted network supplies access control. |
 | `--enable-tool <name>` | n/a | Opt in a remote tool that is disabled by default. |
 | `--disable-tool <name>` | n/a | Remove a tool from remote exposure. |
 | `--log-level <level>` | n/a | Adjust server logging. |
 
-If no token is configured, the server should warn clearly. Tokenless mode is
-only appropriate on a trusted private network during controlled use.
+The default bind address is `127.0.0.1`, where tokenless local testing is
+allowed with a warning. For any non-loopback bind, startup fails when the token
+environment variable is missing or empty. `--allow-unauthenticated` is an
+explicit escape hatch for a controlled network that already provides access
+control; do not use it for direct public exposure.
 
 ## Client Configuration
 
@@ -149,6 +153,8 @@ The first HTTP transport uses a minimal shared-token model:
   comparison.
 - Tokens must not be printed, committed, stored in docs, or returned in errors.
 - Rotate a token by changing it on the server and updating each client config.
+- A non-loopback bind without a token is rejected at startup unless
+  `--allow-unauthenticated` is explicitly passed.
 
 Use a long random token. For example, generate one with your operating system's
 password manager, a secrets manager, or a local command that produces
@@ -217,8 +223,10 @@ is more operationally demanding than Tailscale.
 ### Local Loopback
 
 Loopback HTTP can be useful for debugging an SSE client on the same host. It is
-not a multi-device topology, and stdio remains the simpler default for normal
-local use.
+the only mode that allows missing token configuration by default. Both IPv4
+loopback (`127.0.0.0/8`) and IPv6 loopback (`::1`) are recognized. It is not a
+multi-device topology, and stdio remains the simpler default for normal local
+use.
 
 ## Not Recommended
 
@@ -226,6 +234,8 @@ Avoid these patterns:
 
 - exposing `mem-mcp-http` directly to the public internet with router port
   forwarding;
+- using `--allow-unauthenticated` on a network that lacks independent access
+  control;
 - relying on a public development tunnel as a permanent production path;
 - placing the BrainMem data root on a public VPS just to make it reachable;
 - syncing `brain.db`, `events.jsonl`, or the runtime data root with generic file

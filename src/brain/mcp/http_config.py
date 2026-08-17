@@ -8,7 +8,7 @@ from pathlib import Path
 
 from brain.exceptions import ConfigError
 
-DEFAULT_HOST = "0.0.0.0"
+DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 DEFAULT_TOKEN_ENV = "BRAINMEM_TOKEN"
 DEFAULT_LOG_LEVEL = "info"
@@ -64,6 +64,7 @@ class HttpConfig:
     token_env: str = DEFAULT_TOKEN_ENV
     enabled_tools: frozenset[str] = DEFAULT_REMOTE_TOOLS
     log_level: str = DEFAULT_LOG_LEVEL
+    allow_unauthenticated: bool = False
 
 
 def parse_args(
@@ -90,6 +91,14 @@ def parse_args(
             "BRAINMEM_TOKEN_ENV",
             "BRAINMEM_HTTP_TOKEN_ENV",
             DEFAULT_TOKEN_ENV,
+        ),
+    )
+    parser.add_argument(
+        "--allow-unauthenticated",
+        action="store_true",
+        help=(
+            "allow tokenless non-loopback access; unsafe unless an outer trusted "
+            "network provides access control"
         ),
     )
     parser.add_argument("--enable-tool", action="append", default=[])
@@ -136,6 +145,7 @@ def parse_args(
         token_env=str(namespace.token_env),
         enabled_tools=enabled_tools,
         log_level=log_level,
+        allow_unauthenticated=bool(namespace.allow_unauthenticated),
     )
 
 

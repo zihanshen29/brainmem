@@ -309,7 +309,11 @@ Entities:
 
 Facts:                87 active, 12 superseded
 Events:               234 in ledger
+Laundry pending/failed: 3/2
 Pending reviews:      3
+Pending reviews by kind: fact_conflict=1, ingest_error=2
+Scratch working:      present (updated 2026-04-30T22:10:00+00:00)
+Scratch snapshot:     missing
 Last ingest:          2026-04-30 22:14:33 (UTC)
 
 # === (P2) ===
@@ -320,6 +324,10 @@ Token usage:          extraction 1.12M (~$3.21), embedding 84K (~$0.002)
 Total cost:           $3.210000
 ```
 
+Laundry 和 scratch 的健康信息只统计文件数量、是否存在和更新时间；status
+不会读取或输出这些文件的正文。Review 分类只读取有界的 frontmatter，正文不会进入
+status 输出。
+
 ---
 
 ## (P2) `mem ingest` 微调
@@ -328,9 +336,18 @@ Total cost:           $3.210000
 
 ```
 mem ingest [--no-auto-reindex] ...
+mem ingest --dry-run [--source laundry|events|all] [--limit N]
+mem ingest --requeue-failed [--limit N]
 ```
 
 默认 `auto_reindex` 受 config 控制。该 flag 可临时关闭自动 reindex。
+
+`--dry-run` 只在本地枚举本次会处理的队列项，不调用 LLM/provider、不要求 API key，
+也不会写文件、数据库、事件、cursor 或 Git commit。
+
+`--requeue-failed` 是显式的本地恢复操作：它把 `laundry/failed/` 中的文件移回
+待处理的 `laundry/`，但不会自动再次 ingest。若待处理区已有同名文件，会生成带编号的
+新文件名，绝不覆盖已有内容。确认恢复结果后，再显式运行 `mem ingest`。
 
 ---
 

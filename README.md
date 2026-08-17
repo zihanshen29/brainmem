@@ -205,5 +205,6 @@ The root `docs/` files are the current product and design documentation:
 - [cli.md](docs/cli.md)
 - [tech-stack.md](docs/tech-stack.md)
 - [multi-device.md](docs/multi-device.md)
+- [codex.md](docs/codex.md)
 
 Phase 1 and Phase 2 historical implementation notes are archived under [docs/archive/](docs/archive/).

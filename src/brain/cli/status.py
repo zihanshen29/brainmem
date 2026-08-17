@@ -7,7 +7,7 @@ from typing import Annotated
 import typer
 
 from brain.exceptions import BrainError
-from brain.pipeline.status import StatusReport, collect_status
+from brain.pipeline.status import FileHealth, StatusReport, collect_status
 
 
 def status_command(
@@ -44,7 +44,17 @@ def _human_summary(report: StatusReport) -> str:
                 f"{report.facts_active}/{report.facts_superseded}"
             ),
             f"Events count: {report.events_count}",
+            (
+                "Laundry pending/failed: "
+                f"{report.laundry['pending']}/{report.laundry['failed']}"
+            ),
             f"Pending reviews: {report.pending_reviews}",
+            (
+                "Pending reviews by kind: "
+                f"{_format_counts(report.pending_reviews_by_kind) or 'none'}"
+            ),
+            _format_file_health("Scratch working", report.scratch["working"]),
+            _format_file_health("Scratch snapshot", report.scratch["snapshot"]),
             f"Last ingest: {report.last_ingest_at or 'never'}",
             f"Git dirty: {str(report.git_dirty).lower()}",
             f"Embedding coverage: {_format_embedding_coverage(report.embedding_coverage)}",
@@ -65,3 +75,9 @@ def _format_embedding_coverage(coverage: dict[str, int | float]) -> str:
     indexed = int(coverage.get("indexed_chunks", 0))
     ratio = float(coverage.get("ratio", 0.0))
     return f"{indexed}/{total} ({ratio:.1%})"
+
+
+def _format_file_health(label: str, health: FileHealth) -> str:
+    if not health.exists:
+        return f"{label}: missing"
+    return f"{label}: present (updated {health.updated_at or 'unknown'})"

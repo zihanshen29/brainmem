@@ -1,8 +1,9 @@
-# BrainMem Runtime SOP
+---
+name: brain-memory
+description: Use BrainMem, the user's durable local memory system, for explicit save, recall, search, ingest, review, and memory-management requests. Also use it proactively when a request refers to before, last time, continuing or doing something as usual; user preferences; a named ongoing project, person, team, or customer; prior decisions or failed attempts; remembered procedures; or high-risk deletion, migration, deployment, credential, refactor, or data-movement work that should check history first. Do not use it for generic facts, API syntax, or evidence already available in the active conversation or workspace.
+---
 
-Use this skill when the user asks to save, recall, search, ingest, review, or
-operate BrainMem long-term memory. BrainMem is the user's durable personal
-memory system, not a general code search tool.
+# BrainMem Runtime SOP
 
 This public skill uses portable placeholders. The user's data root is
 `${BRAIN_ROOT}` and must be resolved at runtime from:

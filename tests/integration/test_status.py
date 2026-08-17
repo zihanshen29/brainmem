@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -32,7 +33,11 @@ def test_status_human_output_contains_minimum_fields(
         "Entities by tier:",
         "Facts active/superseded:",
         "Events count:",
+        "Laundry pending/failed:",
         "Pending reviews:",
+        "Pending reviews by kind:",
+        "Scratch working:",
+        "Scratch snapshot:",
         "Last ingest:",
         "Git dirty:",
         "Embedding coverage:",
@@ -67,6 +72,9 @@ def test_status_json_outputs_stable_count_keys(
         "facts_superseded",
         "events_count",
         "pending_reviews",
+        "pending_reviews_by_kind",
+        "laundry",
+        "scratch",
         "last_ingest_at",
         "git_dirty",
         "embedding_coverage",
@@ -92,6 +100,12 @@ def test_status_json_outputs_stable_count_keys(
     assert payload["facts_superseded"] == 1
     assert payload["events_count"] == 2
     assert payload["pending_reviews"] == 1
+    assert payload["pending_reviews_by_kind"] == {"low_confidence_fact": 1}
+    assert payload["laundry"] == {"pending": 0, "failed": 0}
+    assert payload["scratch"] == {
+        "working": {"exists": False, "updated_at": None},
+        "snapshot": {"exists": False, "updated_at": None},
+    }
     assert payload["last_ingest_at"] == "2026-04-27T10:00:00+00:00"
     assert payload["git_dirty"] is False
     assert payload["embedding_coverage"] == {
@@ -110,6 +124,57 @@ def test_status_json_outputs_stable_count_keys(
     assert payload["total_cost_usd"] == 0.42
     assert isinstance(payload["facts_active"], int)
     assert isinstance(payload["git_dirty"], bool)
+
+
+def test_status_reports_local_queue_and_scratch_health_without_reading_content(
+    brain_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pending_path = brain_root / "laundry" / "private.bin"
+    pending_nested_path = brain_root / "laundry" / "nested" / "private.bin"
+    failed_path = brain_root / "laundry" / "failed" / "private.bin"
+    processed_path = brain_root / "laundry" / "processed" / "private.bin"
+    for path in [pending_path, pending_nested_path, failed_path, processed_path]:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"\xffRAW-SENSITIVE-LAUNDRY")
+
+    review_path = brain_root / "review" / "private-review.md"
+    review_path.write_bytes(
+        b"---\nkind: fact_conflict\nstatus: pending\n---\n"
+        b"\xffRAW-SENSITIVE-REVIEW"
+    )
+    archived_review = brain_root / "review" / "not-pending.md"
+    archived_review.write_bytes(
+        b"---\nkind: ingest_error\nstatus: approved\n---\n"
+        b"\xffRAW-SENSITIVE-REVIEW"
+    )
+
+    working_path = brain_root / "scratch" / "working.md"
+    snapshot_path = brain_root / "scratch" / "SNAPSHOT.md"
+    for path in [working_path, snapshot_path]:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"\xffRAW-SENSITIVE-SCRATCH")
+
+    fixed_timestamp = datetime(2026, 5, 2, 3, 4, 5, tzinfo=UTC).timestamp()
+    os.utime(working_path, (fixed_timestamp, fixed_timestamp))
+    os.utime(snapshot_path, (fixed_timestamp, fixed_timestamp))
+
+    monkeypatch.setattr("brain.pipeline.status.git_ops.is_dirty", lambda _root: False)
+    monkeypatch.chdir(brain_root)
+
+    result = runner.invoke(app, ["status", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["laundry"] == {"pending": 2, "failed": 1}
+    assert payload["pending_reviews"] == 1
+    assert payload["pending_reviews_by_kind"] == {"fact_conflict": 1}
+    expected_time = "2026-05-02T03:04:05+00:00"
+    assert payload["scratch"] == {
+        "working": {"exists": True, "updated_at": expected_time},
+        "snapshot": {"exists": True, "updated_at": expected_time},
+    }
+    assert "RAW-SENSITIVE" not in result.stdout
 
 
 def test_status_json_last_ingest_can_be_null(

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import re
 import sqlite3
 from collections import Counter
 from contextlib import suppress
@@ -25,8 +24,8 @@ from brain.models import (
 from brain.pages import parse_page
 from brain.pages.timeline import parse_entry
 from brain.paths import BrainPaths
+from brain.pipeline.retrieval.keyword import tokenize
 
-TOKEN_RE = re.compile(r"[a-z0-9]+")
 SUMMARY_LIMIT = 200
 RECENT_TIMELINE_LIMIT = 3
 BACKLINK_BOOST = 1.5
@@ -128,7 +127,7 @@ def ask(
         trace.classifier = classifier
 
     candidates = _load_page_candidates(paths, selected_type)
-    query_tokens = _tokens(normalized_query)
+    query_tokens = tokenize(normalized_query)
     if trace is not None:
         trace.query_tokens = query_tokens
 
@@ -762,7 +761,7 @@ def _candidate_weight(candidate: _PageCandidate) -> float:
 def _score_tokens(query_tokens: list[str], text: str) -> float:
     if not query_tokens:
         return 0.0
-    counts = Counter(_tokens(text))
+    counts = Counter(tokenize(text))
     score = 0.0
     for token in set(query_tokens):
         count = counts[token]
@@ -903,10 +902,6 @@ def _answer_question(query: str, pages: list[AskPageSummary]) -> tuple[str | Non
     answer = getattr(response, "answer", response)
     sources = getattr(response, "sources", [])
     return str(answer), list(sources), "brain.llm.client.answer_question"
-
-
-def _tokens(text: str) -> list[str]:
-    return TOKEN_RE.findall(text.lower())
 
 
 def _normalize_page_type(page_type: PageType | str | None) -> PageType | None:

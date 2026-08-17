@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import re
 import sqlite3
-from dataclasses import dataclass
+import stat
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 import frontmatter
@@ -14,6 +17,25 @@ from brain.models import PageType
 from brain.pages import parse_page
 from brain.paths import BrainPaths
 from brain.pipeline.chunking import split_page_into_chunks
+
+_FAILED_LAUNDRY_DIR_NAME = "failed"
+_PROCESSED_LAUNDRY_DIR_NAME = "processed"
+_MAX_FRONTMATTER_BYTES = 64 * 1024
+_REVIEW_KIND_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+
+@dataclass(frozen=True)
+class FileHealth:
+    """Content-free health metadata for one optional local file."""
+
+    exists: bool
+    updated_at: str | None
+
+    def to_dict(self) -> dict[str, bool | str | None]:
+        return {
+            "exists": self.exists,
+            "updated_at": self.updated_at,
+        }
 
 
 @dataclass(frozen=True)
@@ -34,6 +56,16 @@ class StatusReport:
     active_import_jobs: int
     token_usage: dict[str, int]
     total_cost_usd: float
+    pending_reviews_by_kind: dict[str, int] = field(default_factory=dict)
+    laundry: dict[str, int] = field(
+        default_factory=lambda: {"pending": 0, "failed": 0}
+    )
+    scratch: dict[str, FileHealth] = field(
+        default_factory=lambda: {
+            "working": FileHealth(exists=False, updated_at=None),
+            "snapshot": FileHealth(exists=False, updated_at=None),
+        }
+    )
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -44,6 +76,11 @@ class StatusReport:
             "facts_superseded": self.facts_superseded,
             "events_count": self.events_count,
             "pending_reviews": self.pending_reviews,
+            "pending_reviews_by_kind": dict(self.pending_reviews_by_kind),
+            "laundry": dict(self.laundry),
+            "scratch": {
+                name: health.to_dict() for name, health in self.scratch.items()
+            },
             "last_ingest_at": self.last_ingest_at,
             "git_dirty": self.git_dirty,
             "embedding_coverage": dict(self.embedding_coverage),
@@ -79,6 +116,8 @@ def collect_status(brain_root: Path) -> StatusReport:
 
     total_chunks = _page_chunk_count(paths, config.embedding.chunk_max_chars)
 
+    pending_reviews_by_kind = _pending_reviews_by_kind(paths.review_dir)
+
     return StatusReport(
         brain_root=paths.root,
         pages_by_type=_pages_by_type(paths),
@@ -86,7 +125,13 @@ def collect_status(brain_root: Path) -> StatusReport:
         facts_active=facts_active,
         facts_superseded=facts_superseded,
         events_count=_events_count(paths.events_jsonl),
-        pending_reviews=_pending_reviews(paths.review_dir),
+        pending_reviews=sum(pending_reviews_by_kind.values()),
+        pending_reviews_by_kind=pending_reviews_by_kind,
+        laundry=_laundry_counts(paths.laundry_dir),
+        scratch={
+            "working": _file_health(paths.working_buffer),
+            "snapshot": _file_health(paths.snapshot_path),
+        },
         last_ingest_at=last_ingest_at,
         git_dirty=git_ops.is_dirty(paths.root),
         embedding_coverage=_embedding_coverage(total_chunks, indexed_chunks),
@@ -275,18 +320,86 @@ def _events_count(path: Path) -> int:
         raise BrainError(f"Could not read events ledger: {path}") from exc
 
 
-def _pending_reviews(path: Path) -> int:
+def _pending_reviews_by_kind(path: Path) -> dict[str, int]:
     try:
         candidates = sorted(path.glob("*.md"))
     except OSError as exc:
         raise BrainError(f"Could not read review directory: {path}") from exc
 
-    pending = 0
+    counts: dict[str, int] = {}
     for review_path in candidates:
         try:
-            post = frontmatter.load(review_path, encoding="utf-8")
+            metadata = _frontmatter_metadata_only(review_path)
         except Exception as exc:  # pragma: no cover - parser exposes multiple errors
             raise BrainError(f"Could not read review file: {review_path}") from exc
-        if str(post.metadata.get("status", "pending")) == "pending":
-            pending += 1
-    return pending
+        if str(metadata.get("status", "pending")) != "pending":
+            continue
+        raw_kind = str(metadata.get("kind") or "").strip()
+        kind = raw_kind if _REVIEW_KIND_RE.fullmatch(raw_kind) else "unknown"
+        counts[kind] = counts.get(kind, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _frontmatter_metadata_only(path: Path) -> dict[str, object]:
+    """Read bounded review frontmatter without reading the review body."""
+    with path.open("rb", buffering=0) as handle:
+        first = handle.readline(_MAX_FRONTMATTER_BYTES + 1)
+        if len(first) > _MAX_FRONTMATTER_BYTES:
+            raise ValueError("review frontmatter is too large")
+        if first.removeprefix(b"\xef\xbb\xbf").strip() != b"---":
+            return {}
+
+        header_lines = [first]
+        total_bytes = len(first)
+        while True:
+            remaining = _MAX_FRONTMATTER_BYTES - total_bytes
+            if remaining <= 0:
+                raise ValueError("review frontmatter is too large")
+            line = handle.readline(remaining + 1)
+            if not line:
+                raise ValueError("review frontmatter is not terminated")
+            total_bytes += len(line)
+            if total_bytes > _MAX_FRONTMATTER_BYTES:
+                raise ValueError("review frontmatter is too large")
+            header_lines.append(line)
+            if line.strip() in {b"---", b"..."}:
+                break
+
+    header = b"".join(header_lines).decode("utf-8-sig")
+    return dict(frontmatter.loads(header).metadata)
+
+
+def _laundry_counts(path: Path) -> dict[str, int]:
+    counts = {"pending": 0, "failed": 0}
+    if not path.exists():
+        return counts
+
+    try:
+        candidates = sorted(
+            candidate for candidate in path.rglob("*") if candidate.is_file()
+        )
+    except OSError as exc:
+        raise BrainError(f"Could not read laundry directory: {path}") from exc
+
+    for candidate in candidates:
+        relative = candidate.relative_to(path)
+        top_level = relative.parts[0]
+        if top_level == _FAILED_LAUNDRY_DIR_NAME:
+            counts["failed"] += 1
+        elif top_level != _PROCESSED_LAUNDRY_DIR_NAME:
+            counts["pending"] += 1
+    return counts
+
+
+def _file_health(path: Path) -> FileHealth:
+    try:
+        file_stat = path.stat()
+    except FileNotFoundError:
+        return FileHealth(exists=False, updated_at=None)
+    except OSError as exc:
+        raise BrainError(f"Could not inspect local status file: {path}") from exc
+
+    if not stat.S_ISREG(file_stat.st_mode):
+        return FileHealth(exists=False, updated_at=None)
+    updated_at = datetime.fromtimestamp(file_stat.st_mtime, tz=UTC).isoformat()
+    return FileHealth(exists=True, updated_at=updated_at)

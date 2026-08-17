@@ -22,5 +22,16 @@ def brain_root(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
+def fake_provider_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Satisfy preflight while making accidental real provider calls fail closed."""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-only-key")
+
+    def reject_real_provider_call(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("provider call must be mocked in tests using fake_provider_key")
+
+    monkeypatch.setattr("brain.llm.client._extract_impl", reject_real_provider_call)
+
+
+@pytest.fixture()
 def cli_runner() -> CliRunner:
     return CliRunner()

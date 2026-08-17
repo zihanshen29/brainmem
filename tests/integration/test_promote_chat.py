@@ -30,6 +30,7 @@ runner = CliRunner()
 def test_promote_chat_pipeline_creates_conversation_page_event_ingest_and_commit(
     brain_root: Path,
     monkeypatch: pytest.MonkeyPatch,
+    fake_provider_key: None,
 ) -> None:
     _append_chat(brain_root, VALID_ULID, "User: Keep this architecture note.\nAssistant: Done.")
     _install_promote_draft(monkeypatch)
@@ -74,6 +75,7 @@ def test_promote_chat_pipeline_creates_conversation_page_event_ingest_and_commit
 def test_promote_chat_duplicate_rejects_without_new_page_event(
     brain_root: Path,
     monkeypatch: pytest.MonkeyPatch,
+    fake_provider_key: None,
 ) -> None:
     _append_chat(brain_root, VALID_ULID, "User: Keep this.\nAssistant: Done.")
     _install_promote_draft(monkeypatch)
@@ -108,6 +110,7 @@ def test_promote_chat_duplicate_rejects_existing_non_conversation_page(
 def test_cli_promote_chat_accepts_prefix_title_and_slug_overrides(
     brain_root: Path,
     monkeypatch: pytest.MonkeyPatch,
+    fake_provider_key: None,
 ) -> None:
     _append_chat(brain_root, VALID_ULID, "User: CLI promotion.\nAssistant: Ready.")
     _install_promote_draft(monkeypatch, title="Ignored Draft Title")
