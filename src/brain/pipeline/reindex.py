@@ -4,6 +4,7 @@ import hashlib
 import re
 import sqlite3
 from collections.abc import Iterable
+from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -66,7 +67,7 @@ def reindex(
     report = ReindexReport(dry_run=dry_run)
     filters = _normalize_page_filter(page_filter)
 
-    with connect(paths.db_path) as conn:
+    with closing(connect(paths.db_path)) as conn, conn:
         pending: list[_PendingChunk] = []
         orphans: list[EmbeddingRecord] = []
         current_page_slugs: set[str] = set()

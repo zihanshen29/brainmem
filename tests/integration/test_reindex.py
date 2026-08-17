@@ -242,6 +242,42 @@ def test_reindex_validates_schema_dimension_before_pending_embeddings(
     assert _embedding_count(brain_root) == 0
 
 
+def test_reindex_closes_database_before_auto_commit(brain_root: Path, monkeypatch) -> None:
+    _patch_embedding(monkeypatch)
+    _write_sample_page(brain_root, "alpha")
+    real_connect = connect
+    state = {"closed": False}
+
+    class TrackingConnection:
+        def __init__(self, path: Path) -> None:
+            self._conn = real_connect(path)
+
+        def __getattr__(self, name: str):
+            return getattr(self._conn, name)
+
+        def __enter__(self):
+            self._conn.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self._conn.__exit__(*args)
+
+        def close(self) -> None:
+            state["closed"] = True
+            self._conn.close()
+
+    def assert_closed_before_commit(*_args, **_kwargs) -> str:
+        assert state["closed"] is True
+        return "commit-id"
+
+    monkeypatch.setattr("brain.pipeline.reindex.connect", TrackingConnection)
+    monkeypatch.setattr("brain.pipeline.reindex.git_ops.commit", assert_closed_before_commit)
+
+    report = reindex(brain_root, no_commit=False)
+
+    assert report.committed is True
+
+
 def test_cli_reindex_command_is_registered(brain_root: Path, monkeypatch) -> None:
     _patch_embedding(monkeypatch)
     _write_sample_page(brain_root, "alpha")
