@@ -7,6 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from brain.concurrency import coordinated
 from brain.exceptions import BrainError
 from brain.ledger.reader import read_all
 from brain.paths import BrainPaths
@@ -51,6 +52,7 @@ class ScratchEntry(BaseModel):
     text: str
 
 
+@coordinated(write=True)
 def append_working(
     brain_root: Path,
     text: str,
@@ -83,6 +85,7 @@ def append_working(
     )
 
 
+@coordinated(write=True)
 def rebuild_snapshot(
     brain_root: Path,
     max_items: int = 20,

@@ -8,6 +8,7 @@ from pathlib import Path
 import ulid
 from pydantic import BaseModel, ConfigDict, Field
 
+from brain.concurrency import coordinated
 from brain.config import load_config
 from brain.db.connection import connect
 from brain.exceptions import BrainError, ConfigError, DBError
@@ -40,6 +41,7 @@ class EntityPruneReport(BaseModel):
     committed: bool = False
 
 
+@coordinated(write=True)
 def prune_stub_entities(
     brain_root: Path,
     slugs: list[str],
@@ -95,7 +97,6 @@ def prune_stub_entities(
         raise DBError("Could not prune stub entities") from exc
     finally:
         conn.close()
-        _remove_sqlite_sidecars(paths.db_path)
 
     rebuild_report = rebuild_derived(paths.root, auto_commit=False)
     report.backlinks_rebuilt = rebuild_report.backlinks_rebuilt
@@ -249,15 +250,6 @@ def _execute_count(conn: sqlite3.Connection, sql: str, params: tuple[object, ...
 
 def _checkpoint_db(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-
-
-def _remove_sqlite_sidecars(db_path: Path) -> None:
-    for suffix in ("-wal", "-shm"):
-        sidecar = db_path.with_name(f"{db_path.name}{suffix}")
-        try:
-            sidecar.unlink()
-        except (FileNotFoundError, PermissionError):
-            continue
 
 
 def _now_utc() -> datetime:

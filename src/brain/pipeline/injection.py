@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from brain.concurrency import coordinated
 from brain.exceptions import BrainError
 from brain.models import Page, PageType
 from brain.pages import parse_page
@@ -62,6 +63,7 @@ class InjectionResult(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+@coordinated()
 def inject(
     brain_root: Path | str,
     query: str,

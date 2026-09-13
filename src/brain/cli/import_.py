@@ -7,6 +7,7 @@ from typing import Annotated, Any
 
 import typer
 
+from brain.concurrency import coordinated
 from brain.db.connection import connect, sqlite_uri
 from brain.exceptions import BrainError
 from brain.paths import BrainPaths
@@ -182,6 +183,7 @@ def _summary(report: Any) -> str:
     )
 
 
+@coordinated()
 def _job_status(brain_root: Path, job_id: str | None) -> str:
     from brain.import_.jobs import get_job_detail, list_jobs
 
@@ -209,6 +211,7 @@ def _job_status(brain_root: Path, job_id: str | None) -> str:
     return "\n".join(lines)
 
 
+@coordinated()
 def _job_list(brain_root: Path) -> str:
     from brain.import_.jobs import list_jobs
 
@@ -219,6 +222,7 @@ def _job_list(brain_root: Path) -> str:
     return "\n".join(["Import jobs:", *[f"- {_format_job(job)}" for job in jobs]])
 
 
+@coordinated(write=True)
 def _abort_job(brain_root: Path, job_id: str) -> str:
     from brain.import_.jobs import abort_job
 
@@ -251,7 +255,7 @@ def _format_job(job: Any) -> str:
 def _readonly_jobs_connection(brain_root: Path) -> sqlite3.Connection:
     paths = BrainPaths(Path(brain_root).expanduser().resolve())
     try:
-        conn = sqlite3.connect(sqlite_uri(paths.db_path, mode="ro", immutable=1), uri=True)
+        conn = sqlite3.connect(sqlite_uri(paths.db_path, mode="ro"), uri=True)
         conn.row_factory = sqlite3.Row
     except sqlite3.Error as exc:
         raise BrainError(f"Could not open import jobs database: {paths.db_path}") from exc

@@ -16,6 +16,7 @@ import frontmatter
 import ulid
 from pydantic import BaseModel, ConfigDict, Field
 
+from brain.concurrency import coordinated
 from brain.config import load_config
 from brain.db.connection import connect, sqlite_uri
 from brain.exceptions import BrainError
@@ -85,6 +86,7 @@ class ImportProgress:
     status: str
 
 
+@coordinated(write=True)
 def import_path(
     brain_root: Path,
     source_path: Path | str | None = None,
@@ -777,7 +779,7 @@ def _write_lf(path: Path, text: str) -> None:
 
 
 def _readonly_connection(path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(sqlite_uri(path, mode="ro", immutable=1), uri=True)
+    conn = sqlite3.connect(sqlite_uri(path, mode="ro"), uri=True)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -790,12 +792,6 @@ def _close_connection(conn: sqlite3.Connection, db_path: Path) -> None:
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     finally:
         conn.close()
-        for suffix in ("-wal", "-shm"):
-            sidecar = db_path.with_name(f"{db_path.name}{suffix}")
-            try:
-                sidecar.unlink()
-            except (FileNotFoundError, PermissionError):
-                continue
 
 
 def _now_utc() -> datetime:

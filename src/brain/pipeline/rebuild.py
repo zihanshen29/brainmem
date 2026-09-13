@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from brain.concurrency import coordinated
 from brain.config import load_config
 from brain.db.backlinks import replace_backlinks_for_page
 from brain.db.connection import connect
@@ -42,6 +43,7 @@ class RebuildReport(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+@coordinated(write=True)
 def rebuild_db(brain_root: Path, *, auto_commit: bool | None = None) -> RebuildReport:
     """Rebuild brain.db from current markdown pages, then rebuild backlinks and index."""
     paths = BrainPaths(Path(brain_root))
@@ -77,6 +79,7 @@ def rebuild_db(brain_root: Path, *, auto_commit: bool | None = None) -> RebuildR
     return _sorted_report(report)
 
 
+@coordinated(write=True)
 def rebuild_pages(
     brain_root: Path,
     slug: str,
@@ -116,7 +119,6 @@ def rebuild_pages(
     finally:
         _finalize_db(conn, paths.db_path)
         conn.close()
-        _remove_sqlite_sidecars(paths.db_path)
 
     report.committed = _maybe_commit(
         paths,
@@ -127,6 +129,7 @@ def rebuild_pages(
     return _sorted_report(report)
 
 
+@coordinated(write=True)
 def rebuild_backlinks(
     brain_root: Path,
     *,
@@ -144,7 +147,6 @@ def rebuild_backlinks(
         _finalize_db(conn, paths.db_path)
     finally:
         conn.close()
-        _remove_sqlite_sidecars(paths.db_path)
 
     report.committed = _maybe_commit(
         paths,
@@ -155,6 +157,7 @@ def rebuild_backlinks(
     return _sorted_report(report)
 
 
+@coordinated(write=True)
 def rebuild_derived(
     brain_root: Path,
     *,
@@ -172,7 +175,6 @@ def rebuild_derived(
         _finalize_db(conn, paths.db_path)
     finally:
         conn.close()
-        _remove_sqlite_sidecars(paths.db_path)
 
     regenerate_index(paths.root)
     report.index_rebuilt = True
@@ -186,6 +188,7 @@ def rebuild_derived(
     return _sorted_report(report)
 
 
+@coordinated(write=True)
 def rebuild_index(brain_root: Path, *, auto_commit: bool | None = None) -> RebuildReport:
     """Regenerate pages/index.md."""
     paths = BrainPaths(Path(brain_root))
@@ -358,16 +361,6 @@ def _remove_db_files(db_path: Path) -> None:
 def _finalize_db(conn: sqlite3.Connection, db_path: Path) -> None:
     with suppress(sqlite3.Error):
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-    _remove_sqlite_sidecars(db_path)
-
-
-def _remove_sqlite_sidecars(db_path: Path) -> None:
-    for suffix in ("-wal", "-shm"):
-        sidecar = db_path.with_name(f"{db_path.name}{suffix}")
-        try:
-            sidecar.unlink()
-        except (FileNotFoundError, PermissionError):
-            continue
 
 
 def _maybe_commit(

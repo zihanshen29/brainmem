@@ -12,6 +12,7 @@ from pathlib import Path
 import ulid
 
 from brain import git_ops
+from brain.concurrency import coordinated
 from brain.config import load_config
 from brain.db.connection import connect
 from brain.db.embeddings import delete_embedding, find_embeddings_for_page, upsert_embedding
@@ -54,6 +55,7 @@ class _PendingChunk:
     action: str
 
 
+@coordinated(write=True)
 def reindex(
     brain_root: Path,
     force: bool = False,

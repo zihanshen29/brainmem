@@ -7,6 +7,7 @@ from pathlib import Path
 import ulid
 from pydantic import BaseModel, ConfigDict
 
+from brain.concurrency import coordinated
 from brain.config import ProcedureConfig, load_config
 from brain.exceptions import BrainError
 from brain.ledger import append_event
@@ -38,6 +39,7 @@ class ProcedureReport(BaseModel):
     summary: str
 
 
+@coordinated(write=True)
 def create_procedure(
     brain_root: Path,
     slug: str,
@@ -90,6 +92,7 @@ def create_procedure(
     )
 
 
+@coordinated(write=True)
 def run_procedure(
     brain_root: Path,
     slug: str,
@@ -175,6 +178,7 @@ def run_procedure(
     )
 
 
+@coordinated(write=True)
 def promote_procedure(
     brain_root: Path,
     slug: str,

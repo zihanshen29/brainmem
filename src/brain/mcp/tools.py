@@ -5,6 +5,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any
 
+from brain.concurrency import coordinated
 from brain.ledger.reader import read_all
 from brain.mcp.formatters import to_jsonable
 from brain.models import PageType
@@ -146,6 +147,7 @@ def brain_snapshot_rebuild(
     )
 
 
+@coordinated()
 def brain_procedure_list(
     brain_root: str | Path = ".",
     status: str | None = None,
@@ -244,6 +246,7 @@ def brain_review_queue(
     return {"items": to_jsonable(items), "count": len(items)}
 
 
+@coordinated()
 def brain_recent_events(
     brain_root: str | Path = ".",
     limit: int = 10,

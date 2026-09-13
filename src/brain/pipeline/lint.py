@@ -13,6 +13,7 @@ from typing import Any
 import frontmatter
 from pydantic import BaseModel, ConfigDict, Field
 
+from brain.concurrency import coordinated
 from brain.config import load_config
 from brain.db.connection import connect
 from brain.exceptions import BrainError
@@ -207,6 +208,7 @@ def lint_citations(paths: BrainPaths) -> list[LintIssue]:
     return issues
 
 
+@coordinated(write=True)
 def run_lint(
     brain_root: Path,
     kinds: Iterable[str | LintKind],
@@ -238,7 +240,6 @@ def run_lint(
                 report.review_files.append(review_file)
     finally:
         _checkpoint_and_close(conn)
-        _remove_sqlite_sidecars(paths.db_path)
 
     if config.git.auto_commit and (report.lint_results or report.review_files):
         commit_label = "all" if requested_all else selected[0].value
@@ -414,15 +415,6 @@ def _checkpoint_and_close(conn: sqlite3.Connection) -> None:
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     finally:
         conn.close()
-
-
-def _remove_sqlite_sidecars(db_path: Path) -> None:
-    for suffix in ("-wal", "-shm"):
-        sidecar = db_path.with_name(f"{db_path.name}{suffix}")
-        try:
-            sidecar.unlink()
-        except (FileNotFoundError, PermissionError):
-            continue
 
 
 def _row_dict(row: sqlite3.Row) -> dict[str, Any]:

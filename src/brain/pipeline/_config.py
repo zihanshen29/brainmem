@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 from brain.config import (
@@ -11,6 +10,7 @@ from brain.config import (
     TierConfig,
     load_config,
 )
+from brain.config_context import get_config_path
 from brain.exceptions import ConfigError
 
 BRAIN_CONFIG_ENV = "BRAIN_CONFIG"
@@ -23,7 +23,7 @@ def resolve_pipeline_config(config: Config | None) -> Config:
     if config is not None:
         return config
 
-    env_path = os.environ.get(BRAIN_CONFIG_ENV)
+    env_path = get_config_path()
     if env_path:
         return _load_or_default(Path(env_path))
 

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
 
 from brain.config import AnthropicConfig, DeepSeekConfig, OpenAIConfig, load_config
+from brain.config_context import get_config_path
 from brain.exceptions import ConfigError, LLMError
 from brain.llm.prompts import (
     build_compiled_truth_prompt,
@@ -302,7 +303,7 @@ def _resolve_anthropic_settings() -> _AnthropicSettings:
 
 
 def _resolve_llm_settings(preferred_provider: str | None = None) -> _LLMSettings:
-    config_path = os.environ.get(BRAIN_CONFIG_ENV)
+    config_path = get_config_path()
     if config_path:
         return _settings_from_config(Path(config_path), preferred_provider=preferred_provider)
 

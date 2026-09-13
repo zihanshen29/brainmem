@@ -8,6 +8,7 @@ from typing import Annotated, Any
 
 import typer
 
+from brain.concurrency import root_lock
 from brain.exceptions import BrainError
 
 
@@ -68,9 +69,12 @@ def review_command(
             return
 
         if review_id is not None:
-            path = resolve_review_path(root, review_id)
-            _open_editor(path)
-            decision = _decision_value(parse_review_file(path))
+            # The editor writes the review file directly. Keep maintenance and
+            # readers out until it exits and the complete file can be parsed.
+            with root_lock(root, write=True):
+                path = resolve_review_path(root, review_id)
+                _open_editor(path)
+                decision = _decision_value(parse_review_file(path))
             if decision is None:
                 typer.echo(f"Opened {path}; no decision selected.")
             else:

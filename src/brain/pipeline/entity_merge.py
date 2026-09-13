@@ -9,6 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from brain.concurrency import coordinated
 from brain.config import load_config
 from brain.db.backlinks import replace_backlinks_for_page
 from brain.db.connection import connect
@@ -45,6 +46,7 @@ class EntityMergeReport(BaseModel):
     committed: bool = False
 
 
+@coordinated(write=True)
 def merge_entities(
     brain_root: Path,
     slug_a: str,
@@ -148,7 +150,6 @@ def merge_entities(
         _finalize_db(conn, paths.db_path)
     finally:
         conn.close()
-        _remove_sqlite_sidecars(paths.db_path)
 
     report.pages_touched = sorted(set(report.pages_touched))
     report.aliases_added = sorted(set(report.aliases_added))
@@ -332,7 +333,6 @@ def _rebuild_backlinks(paths: BrainPaths) -> int:
         raise DBError("Could not rebuild backlinks after merge") from exc
     finally:
         conn.close()
-        _remove_sqlite_sidecars(paths.db_path)
 
 
 def _replace_all_backlinks(conn: sqlite3.Connection, paths: BrainPaths) -> int:
@@ -576,16 +576,6 @@ def _repo_relative_path(root: Path, path: Path) -> str:
 def _finalize_db(conn: sqlite3.Connection, db_path: Path) -> None:
     with suppress(sqlite3.Error):
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-    _remove_sqlite_sidecars(db_path)
-
-
-def _remove_sqlite_sidecars(db_path: Path) -> None:
-    for suffix in ("-wal", "-shm"):
-        sidecar = db_path.with_name(f"{db_path.name}{suffix}")
-        try:
-            sidecar.unlink()
-        except (FileNotFoundError, PermissionError):
-            continue
 
 
 def _now_utc() -> datetime:

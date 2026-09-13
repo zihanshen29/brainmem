@@ -15,6 +15,7 @@ import frontmatter
 import ulid
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from brain.concurrency import coordinated
 from brain.config import load_config
 from brain.db.connection import connect
 from brain.db.entities import add_alias, get_entity, lookup_by_alias, upsert_entity
@@ -162,6 +163,7 @@ KEY_VALUE_RE = re.compile(r"^\s*(?:[-*]\s*)?(?P<key>[A-Za-z_][\w-]*):\s*(?P<valu
 REVIEW_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_[^_]+_(?P<kind>.+)$")
 
 
+@coordinated()
 def list_pending(brain_root: Path, kind: str | ReviewKind | None = None) -> list[ReviewItem]:
     """List direct pending markdown review files under brain_root/review."""
     paths = BrainPaths(Path(brain_root))
@@ -243,6 +245,7 @@ def _selected_action_from_file(path: Path) -> tuple[ReviewAction, list[str]]:
     return _selected_action(post.content)
 
 
+@coordinated(write=True)
 def apply_pending(brain_root: Path, kind: str | ReviewKind | None = None) -> ReviewBatchReport:
     """Apply all pending review files that have a selected decision."""
     paths = BrainPaths(Path(brain_root))
@@ -276,13 +279,13 @@ def apply_pending(brain_root: Path, kind: str | ReviewKind | None = None) -> Rev
             _add_batch_report(batch, report)
     finally:
         _checkpoint_and_close(conn)
-        _remove_sqlite_sidecars(paths.db_path)
 
     if batch.applied > 0:
         _auto_commit(paths, batch.applied)
     return batch
 
 
+@coordinated(write=True)
 def quarantine_invalid_pending(
     brain_root: Path,
     kind: str | ReviewKind | None = None,
@@ -1378,15 +1381,6 @@ def _commit_paths(paths: BrainPaths) -> list[Path]:
         paths.review_dir,
     ]
     return [path for path in candidates if path.exists()]
-
-
-def _remove_sqlite_sidecars(db_path: Path) -> None:
-    for suffix in ("-wal", "-shm"):
-        sidecar = db_path.with_name(f"{db_path.name}{suffix}")
-        try:
-            sidecar.unlink()
-        except (FileNotFoundError, PermissionError):
-            continue
 
 
 def _now_utc() -> datetime:

@@ -7,6 +7,7 @@ from pathlib import Path
 import frontmatter
 from pydantic import BaseModel, ConfigDict
 
+from brain.concurrency import coordinated
 from brain.config import load_config
 from brain.exceptions import BrainError
 from brain.paths import BrainPaths
@@ -25,6 +26,7 @@ class CaptureReport(BaseModel):
     committed: bool = False
 
 
+@coordinated(write=True)
 def capture(
     brain_root: Path,
     text: str,

@@ -5,14 +5,18 @@ import logging
 import re
 import sqlite3
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from functools import wraps
 from pathlib import Path
 from typing import Any, Literal, cast
 
 from pydantic import ValidationError
 
+from brain.concurrency import RootBusyError
+from brain.db.connection import prepare_sqlite_extension
 from brain.exceptions import BrainError, ConfigError
 from brain.mcp import tools
+from brain.mcp.dispatch import READ_TOOLS, MCPBusyError, ToolDispatcher
 from brain.mcp.http_auth import TokenAuthMiddleware, is_loopback_host, token_from_env
 from brain.mcp.http_config import HttpConfig, parse_args
 from brain.mcp.server import TOOL_NAMES
@@ -25,27 +29,32 @@ _UNIX_PATH_RE = re.compile(r"(?<![\w])/(?:[^\s:;,\]\[(){}<>\"']+/)*[^\s:;,\]\[()
 _FastMcpLogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
 
-def build_server(config: HttpConfig) -> Any:
+def build_server(config: HttpConfig, *, dispatcher: ToolDispatcher | None = None) -> Any:
     """Build the BrainMem HTTP/SSE MCP server with a fixed brain root."""
     try:
         from mcp.server.fastmcp import FastMCP
+        from mcp.types import ToolAnnotations
     except ImportError as exc:
         raise RuntimeError(
             "The 'mcp' package is required to start the BrainMem HTTP MCP server. "
             "Install project dependencies or run tests against brain.mcp.tools."
         ) from exc
 
+    prepare_sqlite_extension()
     server = FastMCP(
         "brainmem",
         host=config.host,
         port=config.port,
         log_level=cast(_FastMcpLogLevel, config.log_level.upper()),
     )
+    dispatcher = dispatcher or ToolDispatcher()
     for name in TOOL_NAMES:
         if name not in config.enabled_tools:
             continue
         tool: Callable[..., Any] = getattr(tools, name)
-        server.tool()(_fixed_brain_root_tool(tool, config.brain_root))
+        server.tool(annotations=ToolAnnotations(readOnlyHint=name in READ_TOOLS))(
+            _fixed_brain_root_tool(tool, config.brain_root, dispatcher=dispatcher)
+        )
     return server
 
 
@@ -75,8 +84,19 @@ def build_sse_app(
                 "configure the token environment variable or explicitly pass "
                 "--allow-unauthenticated"
             )
+    dispatcher = ToolDispatcher()
+    app = build_server(config, dispatcher=dispatcher).sse_app()
+    original_lifespan = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def lifespan(application: Any):
+        # HTTP has many MCP sessions. Drain only when the ASGI app shuts down.
+        async with original_lifespan(application) as state, dispatcher.lifespan(application):
+            yield state
+
+    app.router.lifespan_context = lifespan
     return TokenAuthMiddleware(
-        build_server(config).sse_app(),
+        app,
         token,
         allow_unauthenticated=allow_unauthenticated,
     )
@@ -102,7 +122,10 @@ def main(argv: Sequence[str] | None = None) -> None:
 def _fixed_brain_root_tool(
     tool: Callable[..., Any],
     brain_root: Path,
+    *,
+    dispatcher: ToolDispatcher | None = None,
 ) -> Callable[..., Any]:
+    dispatcher = dispatcher or ToolDispatcher()
     signature = inspect.signature(tool)
     exposed_parameters = [
         parameter
@@ -115,10 +138,12 @@ def _fixed_brain_root_tool(
     )
 
     @wraps(tool)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
         kwargs.pop("brain_root", None)
         try:
-            return tool(*args, brain_root=brain_root, **kwargs)
+            return await dispatcher.run(tool, *args, brain_root=brain_root, **kwargs)
+        except (MCPBusyError, RootBusyError) as exc:
+            return {"error": {"code": "busy", "message": str(exc)}}
         except BrainError as exc:
             return {
                 "error": {

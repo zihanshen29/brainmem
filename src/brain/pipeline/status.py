@@ -10,6 +10,7 @@ from pathlib import Path
 import frontmatter
 
 import brain.git_ops as git_ops
+from brain.concurrency import coordinated
 from brain.config import load_config
 from brain.db.connection import sqlite_uri
 from brain.exceptions import BrainError
@@ -91,6 +92,7 @@ class StatusReport:
         }
 
 
+@coordinated()
 def collect_status(brain_root: Path) -> StatusReport:
     """Collect a read-only repository status report."""
     paths = BrainPaths(Path(brain_root).expanduser().resolve())

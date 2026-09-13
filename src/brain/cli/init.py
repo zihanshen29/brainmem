@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import importlib
 import json
 import os
 import shutil
 import stat
 import subprocess
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
 from pathlib import Path
 
+from brain.concurrency import coordinated
 from brain.db.migrations import init_db
 from brain.exceptions import BrainError, GitError
 from brain.paths import BrainPaths
@@ -66,6 +65,7 @@ GITATTRIBUTES_TEMPLATE = """* text=auto eol=lf
 """
 
 
+@coordinated(write=True, root_parameter="root")
 def init_brain(root: Path, force: bool = False) -> None:
     """Initialize an empty brain repository at root.
 
@@ -235,16 +235,9 @@ def _ensure_git_config(root: Path, key: str, value: str) -> None:
 
 
 def _commit_initial_repository(root: Path) -> None:
-    with _temporary_global_git_config(os.devnull):
-        try:
-            git_ops = importlib.import_module("brain.git_ops")
-        except ModuleNotFoundError as exc:
-            if exc.name != "brain.git_ops":
-                raise
-            _fallback_commit(root, INITIAL_COMMIT_MESSAGE)
-            return
-
-        git_ops.commit(root, INITIAL_COMMIT_MESSAGE)
+    # Each subprocess receives its own Git environment. Mutating os.environ
+    # here could change another root's concurrent status or auto-commit call.
+    _fallback_commit(root, INITIAL_COMMIT_MESSAGE)
 
 
 def _fallback_commit(root: Path, message: str) -> str | None:
@@ -278,16 +271,3 @@ def _git_error_message(result: subprocess.CompletedProcess[str], fallback: str) 
     if details:
         return details
     return fallback
-
-
-@contextmanager
-def _temporary_global_git_config(path: str) -> Iterator[None]:
-    previous = os.environ.get("GIT_CONFIG_GLOBAL")
-    os.environ["GIT_CONFIG_GLOBAL"] = path
-    try:
-        yield
-    finally:
-        if previous is None:
-            os.environ.pop("GIT_CONFIG_GLOBAL", None)
-        else:
-            os.environ["GIT_CONFIG_GLOBAL"] = previous

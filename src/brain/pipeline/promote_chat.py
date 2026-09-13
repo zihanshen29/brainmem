@@ -7,6 +7,7 @@ from pathlib import Path
 import ulid
 from pydantic import BaseModel, ConfigDict
 
+from brain.concurrency import coordinated
 from brain.config import load_config
 from brain.exceptions import BrainError, PageParseError
 from brain.ledger import append_event, read_all
@@ -31,6 +32,7 @@ class PromoteChatReport(BaseModel):
     committed: bool = False
 
 
+@coordinated(write=True)
 def promote_chat(
     brain_root: Path,
     event_id: str,

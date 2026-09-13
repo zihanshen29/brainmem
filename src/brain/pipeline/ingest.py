@@ -18,6 +18,7 @@ from urllib.parse import urlsplit
 import ulid
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from brain.concurrency import coordinated
 from brain.config import Config, load_config
 from brain.db.backlinks import replace_backlinks_for_page
 from brain.db.connection import connect, sqlite_uri
@@ -206,6 +207,7 @@ class ReviewWriter:
         return relative
 
 
+@coordinated(write=True)
 def ingest(
     brain_root: Path,
     source: str = "all",
@@ -303,6 +305,7 @@ def ingest(
     return _sorted_report(report)
 
 
+@coordinated(write=True)
 def requeue_failed_laundry(
     brain_root: Path,
     *,
@@ -435,15 +438,10 @@ def _validate_provider_endpoint(provider: str, endpoint: str) -> None:
 
 @contextmanager
 def _configured_llm_path(config_path: Path) -> Iterator[None]:
-    previous = os.environ.get(BRAIN_CONFIG_ENV)
-    os.environ[BRAIN_CONFIG_ENV] = str(config_path)
-    try:
+    from brain.config_context import configured_path
+
+    with configured_path(config_path):
         yield
-    finally:
-        if previous is None:
-            os.environ.pop(BRAIN_CONFIG_ENV, None)
-        else:
-            os.environ[BRAIN_CONFIG_ENV] = previous
 
 
 def _classify_ingest_failure(exc: Exception) -> IngestFailureKind:
@@ -1535,7 +1533,7 @@ def _connect_for_ingest(path: Path, *, dry_run: bool) -> sqlite3.Connection:
     if not dry_run:
         return connect(path)
 
-    conn = sqlite3.connect(sqlite_uri(path, mode="ro", immutable=1), uri=True)
+    conn = sqlite3.connect(sqlite_uri(path, mode="ro"), uri=True)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -1545,20 +1543,10 @@ def _close_ingest_connection(conn: sqlite3.Connection, db_path: Path) -> None:
         _checkpoint_db(conn)
     finally:
         conn.close()
-        _remove_sqlite_sidecars(db_path)
 
 
 def _checkpoint_db(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-
-
-def _remove_sqlite_sidecars(db_path: Path) -> None:
-    for suffix in ("-wal", "-shm"):
-        sidecar = db_path.with_name(f"{db_path.name}{suffix}")
-        try:
-            sidecar.unlink()
-        except (FileNotFoundError, PermissionError):
-            continue
 
 
 def _commit_paths(paths: BrainPaths) -> list[Path]:

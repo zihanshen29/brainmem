@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from brain.concurrency import coordinated
 from brain.config import EmbeddingConfig, load_config
 from brain.db.connection import sqlite_uri
 from brain.exceptions import BrainError
@@ -100,6 +101,7 @@ class _PageCandidate(BaseModel):
     marker: str = "page"
 
 
+@coordinated()
 def ask(
     brain_root: Path | str,
     query: str,
@@ -933,7 +935,7 @@ def _connect_optional(path: Path) -> sqlite3.Connection | None:
     try:
         from brain.db.connection import connect
 
-        return connect(path)
+        return connect(path, read_only=True)
     except Exception:
         pass
     try:
