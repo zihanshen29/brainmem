@@ -603,3 +603,22 @@ def test_review_sequence_includes_archived_ids(brain_root):
         "new_entity_review", "synthetic"
     )
     assert Path(second).name != first.name
+
+
+@pytest.mark.parametrize("language, expected", [("zh", "使用"), ("en", "uses")])
+def test_explicit_language_applies_to_local_timeline_and_summary(
+    brain_root, monkeypatch, language, expected
+):
+    config = brain_root / "config.toml"
+    config.write_text(
+        config.read_text(encoding="utf-8").replace(
+            "[ingest]", f'[ingest]\noutput_language = "{language}"'
+        ),
+        encoding="utf-8",
+    )
+    (brain_root / "laundry/note.md").write_text("A project uses Python.", encoding="utf-8")
+    fake_extraction(monkeypatch)
+    report = ingest(brain_root, source="laundry", auto_commit=False, auto_reindex=False)
+    page = parse_page(brain_root / report.pages_touched[0])
+    assert expected in page.timeline[0]
+    assert expected in page.compiled_truth

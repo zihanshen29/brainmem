@@ -40,3 +40,13 @@ def fact_sentence(subject: str, predicate: str, value: str, *, chinese: bool = F
         label = VOCABULARY.get(key, (None, (), key))[2]
         return f"{subject}: {label} {value}。"
     return f"{subject}: {key.replace('_', ' ')} {value}."
+
+
+def uses_chinese(text: str, output_language: str = "source") -> bool:
+    """Honor explicit Chinese/English rendering, otherwise follow the evidence."""
+    language = output_language.strip().casefold()
+    if language == "zh" or language.startswith("zh-"):
+        return True
+    if language == "en" or language.startswith("en-"):
+        return False
+    return bool(re.search(r"[\u4e00-\u9fff]", text))

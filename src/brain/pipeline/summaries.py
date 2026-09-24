@@ -5,7 +5,6 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
-import re
 from contextlib import closing
 from pathlib import Path
 
@@ -14,7 +13,7 @@ from brain.db.connection import connect
 from brain.exceptions import BrainError
 from brain.pages import parse_page, write_page
 from brain.pages.timeline import parse_entry
-from brain.predicates import fact_sentence
+from brain.predicates import fact_sentence, uses_chinese
 from brain.privacy import require_external, split_provenance
 
 STUB = "(stub - waiting for more evidence)"
@@ -24,13 +23,13 @@ def summary_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def evidence_summary(conn, page) -> str:
+def evidence_summary(conn, page, output_language: str = "source") -> str:
     rows = conn.execute(
         "SELECT predicate, object FROM facts WHERE subject = ? AND superseded_by IS NULL "
         "AND valid_to IS NULL ORDER BY asserted_at DESC, id DESC LIMIT 8",
         (page.frontmatter.slug,),
     ).fetchall()
-    chinese = bool(re.search(r"[\u4e00-\u9fff]", page.frontmatter.title + " ".join(page.timeline)))
+    chinese = uses_chinese(page.frontmatter.title + " ".join(page.timeline), output_language)
     if rows:
         return "\n".join(
             dict.fromkeys(
@@ -48,7 +47,9 @@ def evidence_summary(conn, page) -> str:
     return "\n".join(descriptions)
 
 
-def refresh_generated_summary(conn, path: Path, entity_id: str) -> None:
+def refresh_generated_summary(
+    conn, path: Path, entity_id: str, *, output_language: str = "source"
+) -> None:
     page = parse_page(path)
     if page.frontmatter.curated:
         return
@@ -56,7 +57,7 @@ def refresh_generated_summary(conn, path: Path, entity_id: str) -> None:
         page.compiled_truth
     ):
         return
-    text = evidence_summary(conn, page)
+    text = evidence_summary(conn, page, output_language)
     if not text:
         return
     page.compiled_truth = text
@@ -65,6 +66,7 @@ def refresh_generated_summary(conn, path: Path, entity_id: str) -> None:
 
 
 def propose_summary(root: Path, slug: str, *, provider: bool = False) -> dict:
+    from brain.config import load_config
     from brain.config_context import configured_path
     from brain.paths import BrainPaths
     from brain.pipeline.ingest import IngestReport, ReviewWriter
@@ -73,7 +75,9 @@ def propose_summary(root: Path, slug: str, *, provider: bool = False) -> dict:
     with root_lock(root), closing(connect(root / "brain.db", read_only=True)) as conn:
         path, page = _resolve_unique_page(BrainPaths(root), slug)
         original_hash = hashlib.sha256(path.read_bytes()).hexdigest()
-        text = evidence_summary(conn, page)
+        text = evidence_summary(
+            conn, page, load_config(root / "config.toml").ingest.output_language
+        )
         if provider:
             require_external(root, path=path)
     if provider:

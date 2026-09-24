@@ -61,7 +61,7 @@ from brain.pipeline.signal_detect import (
     detect_signal,
 )
 from brain.pipeline.tier import TierProposal, check_tier_upgrade
-from brain.predicates import fact_sentence, normalize_predicate
+from brain.predicates import fact_sentence, normalize_predicate, uses_chinese
 from brain.privacy import external_allowed, split_provenance
 from brain.transactions import (
     atomic_text,
@@ -1072,10 +1072,11 @@ def _handle_candidate(
         event_id=item.event.id,
         event_date=item.event.timestamp.date().isoformat(),
         timeline_summary=fact_sentence(candidate.subject, candidate.predicate, candidate.object,
-                                       chinese=bool(re.search(r"[\u4e00-\u9fff]", item.text))),
+                                       chinese=uses_chinese(item.text, config.ingest.output_language)),
         report=report,
         result=result,
         suggested_page_type=suggested_page_type,
+        output_language=config.ingest.output_language,
     )
 
 
@@ -1112,6 +1113,7 @@ def _touch_subject_page(
     suggested_page_type: PageType | None = None,
     *,
     force_page: bool = False,
+    output_language: str = "source",
 ) -> None:
     entity = get_entity(conn, subject_id)
     if entity is None:
@@ -1145,7 +1147,7 @@ def _touch_subject_page(
 
     # Only machine-owned summaries can refresh automatically.
     from brain.pipeline.summaries import refresh_generated_summary
-    refresh_generated_summary(conn, page_path, entity.id)
+    refresh_generated_summary(conn, page_path, entity.id, output_language=output_language)
 
     relative = page_path.relative_to(paths.root).as_posix()
     _append_unique(report.pages_touched, relative)
