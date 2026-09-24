@@ -19,6 +19,7 @@ VOCABULARY = {
     "decided": ("many", ("decision", "has_decision"), "决定"),
     "prefers": ("many", ("preference",), "偏好"),
     "related_to": ("many", (), "关联"),
+    "code_path": ("many", (), "代码位置"),
 }
 
 

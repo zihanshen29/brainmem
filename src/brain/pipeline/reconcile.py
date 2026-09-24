@@ -21,7 +21,8 @@ from brain.pipeline.rebuild import page_entity_type
 from brain.transactions import atomic_text, durable_unit
 
 
-def _fingerprint(root: Path) -> str:
+def root_fingerprint(root: Path) -> str:
+    """Hash the primary inputs a reviewed plan depends on."""
     selected = [
         root / "brain.db",
         root / "brain.db-wal",
@@ -59,7 +60,7 @@ def _ignore_plan(root: Path) -> dict:
 def _plan(root: Path, conn) -> dict:
     plan: dict = {
         "version": 2,
-        "fingerprint": _fingerprint(root),
+        "fingerprint": root_fingerprint(root),
         "registry": [],
         "sources": [],
         "alias_conflicts": [],

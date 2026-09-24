@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from brain.concurrency import coordinated
 from brain.config import load_config
 from brain.db.connection import connect
+from brain.db.embeddings import delete_page_embeddings
 from brain.exceptions import BrainError, ConfigError, DBError
 from brain.ledger import append_event
 from brain.models import Event, EventKind, Page, PageType
@@ -90,7 +91,7 @@ def prune_stub_entities(
                     "DELETE FROM tier_proposals WHERE entity_id = ?",
                     (slug,),
                 )
-                report.embeddings_deleted += _delete_embeddings(conn, slug)
+                report.embeddings_deleted += delete_page_embeddings(conn, slug)
                 conn.execute("DELETE FROM entities WHERE id = ?", (slug,))
         _checkpoint_db(conn)
     except sqlite3.Error as exc:
@@ -189,18 +190,6 @@ def _plain_link(match: re.Match[str], titles: dict[str, str]) -> str:
     if target not in titles:
         return match.group(0)
     return display or titles[target]
-
-
-def _delete_embeddings(conn: sqlite3.Connection, slug: str) -> int:
-    rows = conn.execute(
-        "SELECT rowid FROM embedding_index WHERE page_slug = ?",
-        (slug,),
-    ).fetchall()
-    rowids = [int(row["rowid"]) for row in rows]
-    for rowid in rowids:
-        conn.execute("DELETE FROM embeddings WHERE rowid = ?", (rowid,))
-    conn.execute("DELETE FROM embedding_index WHERE page_slug = ?", (slug,))
-    return len(rowids)
 
 
 def _record_prune_event(paths: BrainPaths, report: EntityPruneReport) -> None:

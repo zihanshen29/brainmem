@@ -77,6 +77,19 @@ def delete_embedding(conn: sqlite3.Connection, rowid: int) -> None:
     conn.execute("DELETE FROM embedding_index WHERE rowid = ?", (rowid,))
 
 
+def delete_page_embeddings(conn: sqlite3.Connection, page_slug: str) -> int:
+    """Delete every vector chunk of a page that no longer exists; return the count."""
+    rowids = [
+        int(row[0])
+        for row in conn.execute(
+            "SELECT rowid FROM embedding_index WHERE page_slug = ?", (page_slug,)
+        ).fetchall()
+    ]
+    for rowid in rowids:
+        delete_embedding(conn, rowid)
+    return len(rowids)
+
+
 def find_embeddings_for_page(
     conn: sqlite3.Connection,
     page_slug: str,

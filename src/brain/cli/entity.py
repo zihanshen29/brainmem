@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any
@@ -92,6 +93,60 @@ def prune_stub_command(
     typer.echo(_prune_summary(report))
 
 
+@entity_app.command("literalize")
+def literalize_command(
+    entity_ids: Annotated[
+        list[str] | None,
+        typer.Argument(help="Path or file entities to turn into literal fact values."),
+    ] = None,
+    brain_root: Annotated[
+        Path | None,
+        typer.Option("--brain-root", help="Brain repository root."),
+    ] = None,
+    predicate: Annotated[
+        list[str] | None,
+        typer.Option("--predicate", help="Correct a referencing fact: FACT_ID=snake_case_predicate."),
+    ] = None,
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", help="Write the dry-run plan to a file outside the data root."),
+    ] = None,
+    apply: Annotated[bool, typer.Option("--apply", help="Apply a reviewed plan.")] = False,
+    plan: Annotated[Path | None, typer.Option("--plan", help="Reviewed plan file.")] = None,
+    backup: Annotated[Path | None, typer.Option("--backup", help="Current verified backup.")] = None,
+) -> None:
+    """Dry-run by default. Apply requires the reviewed plan and a current verified backup."""
+    from brain.pipeline.entity_literalize import apply_literalize, plan_literalize
+
+    root = _root(brain_root)
+    try:
+        if apply:
+            if plan is None or backup is None or entity_ids or predicate:
+                raise typer.BadParameter("--apply takes only --plan and --backup")
+            result = apply_literalize(root, json.loads(plan.read_text(encoding="utf-8")), backup)
+        else:
+            result = plan_literalize(root, entity_ids or [], _predicate_corrections(predicate or []))
+            if output is not None:
+                if output.resolve().is_relative_to(root.resolve()):
+                    raise typer.BadParameter("Dry-run output must be outside the data root")
+                output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                result = result["counts"]
+    except (BrainError, OSError, ValueError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def _predicate_corrections(values: list[str]) -> dict[int, str]:
+    corrections: dict[int, str] = {}
+    for value in values:
+        fact_id, separator, name = value.partition("=")
+        if not separator or not fact_id.strip().isdigit():
+            raise typer.BadParameter(f"Expected FACT_ID=predicate, got {value!r}")
+        corrections[int(fact_id)] = name.strip()
+    return corrections
+
+
 def _root(brain_root: Path | None) -> Path:
     return resolve_brain_root(brain_root)
 
@@ -126,6 +181,7 @@ def _summary(report: Any) -> str:
         f"facts_updated={_value(report, 'facts_updated', default=0)} "
         f"backlinks_rebuilt={_value(report, 'backlinks_rebuilt', default=0)} "
         f"tier_proposals_updated={_value(report, 'tier_proposals_updated', default=0)} "
+        f"embeddings_deleted={_value(report, 'embeddings_deleted', default=0)} "
         f"pages_touched={len(_list_value(report, 'pages_touched'))} "
         f"index_rebuilt={_bool_text(_value(report, 'index_rebuilt', default=False))} "
         f"committed={_bool_text(_value(report, 'committed', default=False))}"
