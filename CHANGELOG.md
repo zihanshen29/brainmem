@@ -5,6 +5,9 @@
 - Add `mem entity literalize`: a dry-run plan, current verified backup and exact
   plan match turn mistaken path/file entities into literal fact values, with an
   optional predicate correction and a ledger record. Add `code_path` ("代码位置").
+  `--fold-into PROJECT` moves label entities' facts (label kept in the relation)
+  and stub timelines into a project; `--dangling` fixes references to entities
+  that no longer exist.
 - `mem entity merge` accepts project and concept pages, no longer appends a stub
   placeholder to the kept page, deletes the loser's vectors, records the merge in
   the ledger and lets a machine-owned summary follow the moved facts. Only pending

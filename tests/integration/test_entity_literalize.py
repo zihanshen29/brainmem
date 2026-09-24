@@ -56,11 +56,11 @@ def test_plan_is_read_only_and_reports_blocked_entities(brain_root):
     assert source_manifest(brain_root) == before
     assert plan['absent'] == ['gone']
     assert [change['after'] for change in plan['facts']] == [
-        {'predicate': 'code_path', 'object': r'E:\docu\kb', 'object_type': 'literal'},
-        {'predicate': 'wrote report to', 'object': 'report.md', 'object_type': 'literal'},
+        {'subject': 'kb', 'predicate': 'code_path', 'object': r'E:\docu\kb', 'object_type': 'literal'},
+        {'subject': 'kb', 'predicate': 'wrote report to', 'object': 'report.md', 'object_type': 'literal'},
     ]
     assert plan['errors'] == [{'entity': 'notes-json',
-                               'error': 'subject of 1 facts; a literal value cannot be a subject'}]
+                               'error': 'subject of 1 facts; pass --fold-into a project'}]
     with pytest.raises(BrainError, match='snake_case'):
         plan_literalize(brain_root, ['e-docu-kb'], {1: 'code path'})
 
@@ -115,7 +115,59 @@ def test_entities_with_pages_are_left_to_merge_or_prune(brain_root):
     with closing(connect(brain_root / 'brain.db')) as conn, conn:
         conn.execute("UPDATE entities SET page_path = 'pages/concepts/report-md.md' WHERE id = 'report-md'")
     plan = plan_literalize(brain_root, ['report-md'])
-    assert plan['errors'] == [{'entity': 'report-md', 'error': 'has a page; merge it or prune the stub instead'}]
+    assert plan['errors'] == [{'entity': 'report-md', 'error': 'has a page; pass --fold-into or merge it instead'}]
+
+
+def test_fold_moves_label_facts_and_stub_timeline_into_the_project(brain_root, tmp_path):
+    seed(brain_root)
+    event = '01KQA8VZMXBAV7AKF5JFB4KQ9C'
+    for slug, kind, title, truth, line in [
+        ('kb', 'project', 'Counseling KB', 'Hand written.', f'- 2026-09-01 [event:{EVENT}]: Started.'),
+        ('stage-d15', 'entity', 'd15', '(stub - waiting for more evidence)',
+         f'- 2026-09-02 [event:{event}]: D15 closed RED.'),
+    ]:
+        folder = 'projects' if kind == 'project' else 'entities'
+        write_page(brain_root / f'pages/{folder}/{slug}.md',
+                   Page(frontmatter=Frontmatter(type=kind, slug=slug, title=title, created=NOW, updated=NOW,
+                                                tier=3 if kind == 'entity' else None),
+                        compiled_truth=truth, timeline=[line], sources=[f'laundry/processed/{slug}.md']))
+    with closing(connect(brain_root / 'brain.db')) as conn, conn:
+        upsert_entity(conn, Entity(id='stage-d15', type='person', title='d15', first_seen=NOW, last_seen=NOW,
+                                   page_path='pages/entities/stage-d15.md'))
+        conn.execute("UPDATE entities SET page_path = 'pages/projects/kb.md' WHERE id = 'kb'")
+        add_fact(conn, Fact(subject='stage-d15', predicate='verdict', object='red', object_type='literal',
+                            asserted_at=NOW, source_event=event, confidence=0.9))
+        add_fact(conn, Fact(subject='stage-d15', predicate='completed', object='stage-d15', object_type='entity',
+                            asserted_at=NOW, source_event=event, confidence=0.9))
+    plan = plan_literalize(brain_root, ['stage-d15'], fold_into='kb')
+    assert plan['errors'] == [] and plan['counts']['moved_to_target'] == 2
+    backup = tmp_path / 'before.zip'
+    create_backup(brain_root, backup)
+    apply_literalize(brain_root, json.loads(json.dumps(plan)), backup)
+    rows = fact_rows(brain_root)
+    assert rows[4] == ('d15 verdict', 'red', 'literal') and rows[5] == ('d15 completed', 'd15', 'literal')
+    with closing(connect(brain_root / 'brain.db', read_only=True)) as conn:
+        assert {r[0] for r in conn.execute('SELECT subject FROM facts WHERE id IN (4, 5)')} == {'kb'}
+    from brain.pages import parse_page
+    page = parse_page(brain_root / 'pages/projects/kb.md')
+    assert page.compiled_truth == 'Hand written.'
+    assert any('D15 closed RED.' in line for line in page.timeline)
+    assert 'laundry/processed/stage-d15.md' in page.sources
+    assert not (brain_root / 'pages/entities/stage-d15.md').exists()
+
+
+def test_dangling_references_become_values_and_fold_needs_a_page(brain_root):
+    seed(brain_root)
+    with closing(connect(brain_root / 'brain.db')) as conn, conn:
+        add_fact(conn, Fact(subject='kb', predicate='committed', object='c51a4f0', object_type='entity',
+                            asserted_at=NOW, source_event=EVENT, confidence=0.9))
+    plan = plan_literalize(brain_root, [], dangling=True)
+    assert [(c['id'], c['after']['object'], c['after']['object_type']) for c in plan['facts']] == [
+        (4, 'c51a4f0', 'literal')]
+    assert plan_literalize(brain_root, ['notes-json'], fold_into='kb')['errors'] == [
+        {'entity': 'kb', 'error': 'fold target needs an existing page'},
+        {'entity': 'notes-json', 'error': 'subject of 1 facts; pass --fold-into a project'},
+    ]
 
 
 def test_cli_dry_run_writes_plan_outside_root_and_apply_needs_both_files(brain_root, tmp_path):

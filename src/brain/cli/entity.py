@@ -107,6 +107,14 @@ def literalize_command(
         list[str] | None,
         typer.Option("--predicate", help="Correct a referencing fact: FACT_ID=snake_case_predicate."),
     ] = None,
+    fold_into: Annotated[
+        str | None,
+        typer.Option("--fold-into", help="Project that takes over facts and stub pages of the listed entities."),
+    ] = None,
+    dangling: Annotated[
+        bool,
+        typer.Option("--dangling", help="Also turn references to entities that no longer exist into values."),
+    ] = False,
     output: Annotated[
         Path | None,
         typer.Option("--output", help="Write the dry-run plan to a file outside the data root."),
@@ -121,11 +129,17 @@ def literalize_command(
     root = _root(brain_root)
     try:
         if apply:
-            if plan is None or backup is None or entity_ids or predicate:
+            if plan is None or backup is None or entity_ids or predicate or fold_into or dangling:
                 raise typer.BadParameter("--apply takes only --plan and --backup")
             result = apply_literalize(root, json.loads(plan.read_text(encoding="utf-8")), backup)
         else:
-            result = plan_literalize(root, entity_ids or [], _predicate_corrections(predicate or []))
+            result = plan_literalize(
+                root,
+                entity_ids or [],
+                _predicate_corrections(predicate or []),
+                fold_into=fold_into,
+                dangling=dangling,
+            )
             if output is not None:
                 if output.resolve().is_relative_to(root.resolve()):
                     raise typer.BadParameter("Dry-run output must be outside the data root")

@@ -56,9 +56,15 @@ mem entity literalize --apply --plan /backups/literalize.json \
 Referencing facts keep their evidence and receive the entity title as a literal
 value; `--predicate` corrects a mislabeled relation in the same step. The
 registry row, aliases, backlinks and vectors of each entity are removed and the
-change is recorded in the ledger. Entities used as fact subjects or that still
-have a page are refused: merge them or prune the stub instead. Ids that are
-already gone are listed as `absent`, so re-planning after apply shows no work.
+change is recorded in the ledger. Ids that are already gone are listed as
+`absent`, so re-planning after apply shows no work.
+
+Experiment stages, file names and similar labels sometimes carry facts of their
+own. `--fold-into PROJECT` moves those facts to the project and keeps the label
+in the relation (`d15 verdict: red`), moves a generated stub page's timeline and
+sources into the project page and removes the stub. Pages with their own text
+are refused; merge them instead. `--dangling` also turns references to entities
+that no longer exist into literal values.
 
 `mem entity merge` also accepts project and concept pages, so an extracted
 sub-stage can be folded into its real project. A placeholder summary is never
