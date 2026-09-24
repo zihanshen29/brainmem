@@ -42,6 +42,7 @@ from brain.models import (
 from brain.models.page import SLUG_PATTERN
 from brain.pages import parse_page, write_page
 from brain.pages.timeline import TimelineEntry, format_entry
+from brain.pages.writer import render_front_matter
 from brain.paths import BrainPaths
 
 
@@ -996,7 +997,7 @@ def _mark_and_quarantine(path: Path, reason: str) -> Path:
     metadata["decision"] = ReviewAction.NONE.value
     metadata["quarantine_reason"] = reason
     metadata["quarantined_at"] = _now_utc().isoformat()
-    rendered = frontmatter.dumps(frontmatter.Post(post.content, **metadata), sort_keys=False)
+    rendered = render_front_matter(post.content, metadata)
     _write_lf(review_path, rendered)
 
     quarantine_dir = _find_review_dir(review_path) / "quarantine"
@@ -1014,7 +1015,7 @@ def _mark_review_file(path: Path, status: ReviewStatus, action: ReviewAction) ->
     metadata["status"] = status.value
     metadata["decision"] = action.value
     metadata["decided_at"] = _now_utc().isoformat()
-    rendered = frontmatter.dumps(frontmatter.Post(post.content, **metadata), sort_keys=False)
+    rendered = render_front_matter(post.content, metadata)
     _write_lf(path, rendered)
 
 

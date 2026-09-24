@@ -25,6 +25,7 @@ from brain.import_.discovery import DiscoveredFile
 from brain.ledger import append_event
 from brain.models import Event, EventKind
 from brain.models.import_job import CostEstimate, ImportFileKind
+from brain.pages.writer import render_front_matter
 from brain.paths import BrainPaths
 
 DEFAULT_KINDS = {"md", "txt", "pdf", "jsonl"}
@@ -470,7 +471,7 @@ def _write_laundry_document(
     filename = f"{sequence:04d}-{safe_stem}.md"
     path = _unique_path(paths.laundry_dir / f"import-{job_id}" / filename)
     temp_path = _unique_path(path.with_name(f".{path.name}.tmp"))
-    body = frontmatter.dumps(frontmatter.Post(document.content.strip(), **metadata), sort_keys=False)
+    body = render_front_matter(document.content.strip(), metadata)
     try:
         _write_lf(temp_path, body)
         _replace_laundry_temp(temp_path, path)

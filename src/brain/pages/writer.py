@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from pathlib import Path
 
 import frontmatter
@@ -15,6 +16,17 @@ from brain.pages.parser import (
 from brain.pages.timeline import TimelineEntry, format_entry
 
 
+def render_front_matter(content: str, metadata: Mapping[str, object]) -> str:
+    """Render YAML front matter in the given key order.
+
+    Keys are set after construction: passed as keywords, a "handler" key would be
+    taken as Post's handler argument (and newer typed releases reject the call).
+    """
+    post = frontmatter.Post(content)
+    post.metadata.update(metadata)
+    return frontmatter.dumps(post, sort_keys=False)
+
+
 def write_page(path: Path, page: Page) -> None:
     """Render a page to markdown with YAML frontmatter and LF newlines."""
     validated = Page.model_validate(page)
@@ -22,7 +34,7 @@ def write_page(path: Path, page: Page) -> None:
     if not validated.frontmatter.curated:
         metadata.pop("curated", None)
     body = _render_body(validated)
-    rendered = frontmatter.dumps(frontmatter.Post(body, **metadata), sort_keys=False)
+    rendered = render_front_matter(body, metadata)
     _write_lf(path, _ensure_final_lf(rendered))
 
 

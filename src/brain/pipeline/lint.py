@@ -10,7 +10,6 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-import frontmatter
 from pydantic import BaseModel, ConfigDict, Field
 
 from brain.concurrency import coordinated
@@ -19,6 +18,7 @@ from brain.db.connection import connect
 from brain.exceptions import BrainError
 from brain.models import Tier
 from brain.pages import parse_page
+from brain.pages.writer import render_front_matter
 from brain.paths import BrainPaths
 
 
@@ -293,7 +293,7 @@ def _write_review(paths: BrainPaths, lint_kind: LintKind, issues: list[LintIssue
             REVIEW_DECISION_SECTION,
         ]
     )
-    rendered = frontmatter.dumps(frontmatter.Post(body, **metadata), sort_keys=False)
+    rendered = render_front_matter(body, metadata)
     _write_lf(path, rendered)
     return path.relative_to(paths.root).as_posix()
 

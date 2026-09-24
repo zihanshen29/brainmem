@@ -4,12 +4,12 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
-import frontmatter
 from pydantic import BaseModel, ConfigDict
 
 from brain.concurrency import coordinated
 from brain.config import load_config
 from brain.exceptions import BrainError
+from brain.pages.writer import render_front_matter
 from brain.paths import BrainPaths
 
 VALID_KINDS = {"note", "chat", "idea", "meeting"}
@@ -102,7 +102,7 @@ def _slug_from_text(text: str) -> str:
 
 def _render_capture(metadata: dict[str, str], text: str) -> str:
     body = text.replace("\r\n", "\n").replace("\r", "\n")
-    return frontmatter.dumps(frontmatter.Post(body, **metadata), sort_keys=False)
+    return render_front_matter(body, metadata)
 
 
 def _write_lf(path: Path, text: str) -> None:
