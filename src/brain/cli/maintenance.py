@@ -75,11 +75,18 @@ def summarize_command(
     brain_root: RootOption = None,
     provider: Annotated[bool, typer.Option("--provider")] = False,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Preview a local summary without creating a review or calling a model.")] = False,
+    apply: Annotated[bool, typer.Option("--apply", help="Write the local summary now if the page is a stub or unedited generated text; it keeps following accepted facts.")] = False,
 ):
     """Create a summary review draft. --provider sends allowed evidence to the configured model."""
-    from brain.pipeline.summaries import propose_summary
+    from brain.pipeline.summaries import apply_local_summary, propose_summary
 
-    _run(propose_summary, resolve_brain_root(brain_root), slug, provider=provider, dry_run=dry_run)
+    root = resolve_brain_root(brain_root)
+    if apply:
+        if provider or dry_run:
+            raise typer.BadParameter("--apply writes the local summary; use --dry-run to preview and review provider drafts")
+        _run(apply_local_summary, root, slug)
+    else:
+        _run(propose_summary, root, slug, provider=provider, dry_run=dry_run)
 
 
 def recover_command(brain_root: RootOption = None):

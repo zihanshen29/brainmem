@@ -8,6 +8,7 @@ import difflib
 import hashlib
 import json
 from contextlib import closing
+from datetime import UTC, datetime
 from pathlib import Path
 
 from brain.concurrency import root_lock
@@ -136,15 +137,20 @@ def evidence_summary(conn, page, output_language: str = "source") -> str:
     return "\n".join(descriptions)
 
 
+def machine_owned(page) -> bool:
+    """Only stubs and unedited generated summaries may be replaced without review."""
+    if page.frontmatter.curated:
+        return False
+    return page.compiled_truth == STUB or page.frontmatter.summary_hash == summary_hash(
+        page.compiled_truth
+    )
+
+
 def refresh_generated_summary(
     conn, path: Path, entity_id: str, *, output_language: str = "source"
 ) -> None:
     page = parse_page(path)
-    if page.frontmatter.curated:
-        return
-    if page.compiled_truth != STUB and page.frontmatter.summary_hash != summary_hash(
-        page.compiled_truth
-    ):
+    if not machine_owned(page):
         return
     text = evidence_summary(conn, page, output_language)
     if not text:
@@ -224,3 +230,63 @@ def propose_summary(root: Path, slug: str, *, provider: bool = False, dry_run: b
             + "\n```",
         )
     return {"review_file": review, "page": payload["page_path"], "diff": diff}
+
+
+def apply_local_summary(root: Path, slug: str) -> dict:
+    """Write the local evidence summary directly while the page is machine-owned.
+
+    The text stays machine-owned, so later accepted facts keep refreshing it.
+    Edited, approved and curated summaries are refused rather than replaced.
+    """
+    import ulid
+
+    from brain.config import load_config
+    from brain.git_ops import check_commit_paths, commit
+    from brain.ledger import append_event
+    from brain.models import Event, EventKind
+    from brain.paths import BrainPaths
+    from brain.pipeline._config import default_pipeline_config
+    from brain.pipeline.ingest import _rebuild_touched_backlinks
+    from brain.pipeline.rebuild import _resolve_unique_page
+    from brain.transactions import durable_unit
+
+    paths = BrainPaths(root)
+    config = load_config(paths.config_path) if paths.config_path.exists() else default_pipeline_config()
+    with root_lock(root, write=True):
+        path, page = _resolve_unique_page(paths, slug)
+        relative = path.relative_to(root).as_posix()
+        if not machine_owned(page):
+            raise BrainError(
+                f"Summary of {slug} is edited, approved or curated; create a review draft instead"
+            )
+        commit_paths = [path, paths.db_path, paths.events_jsonl]
+        if config.git.auto_commit:
+            check_commit_paths(root, commit_paths)
+        with closing(connect(paths.db_path)) as conn:
+            text = evidence_summary(conn, page, config.ingest.output_language)
+            if not text.strip() or text == page.compiled_truth:
+                return {"page": relative, "changed": False, "compiled_truth": page.compiled_truth,
+                        "commit": None}
+            with durable_unit(root, conn, f"summary:{slug}:{ulid.ULID()}"):
+                refresh_generated_summary(
+                    conn, path, slug, output_language=config.ingest.output_language
+                )
+                _rebuild_touched_backlinks(conn, paths, [relative])
+                append_event(
+                    paths.events_jsonl,
+                    Event(
+                        id=str(ulid.ULID()),
+                        timestamp=datetime.now(UTC),
+                        kind=EventKind.PAGE_EDITED,
+                        source_ref=f"summary_apply:{slug}",
+                        affected_pages=[relative],
+                        metadata={"action": "summary_local_apply", "slug": slug},
+                    ),
+                )
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        sha = (
+            commit(root, f"summary: write {slug} from accepted facts", paths=commit_paths)
+            if config.git.auto_commit
+            else None
+        )
+    return {"page": relative, "changed": True, "compiled_truth": text, "commit": sha}

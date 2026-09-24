@@ -110,6 +110,49 @@ def test_chinese_labels_are_spaced_from_latin_values(brain_root):
     assert '前端使用 React' in text
 
 
+def test_code_path_renders_as_code_location(brain_root):
+    page, _ = page_and_facts(brain_root, [('code_path', r'E:\docu\sample')])
+    with closing(connect(brain_root / 'brain.db')) as conn:
+        text = evidence_summary(conn, page, 'zh')
+    assert r'代码位置为 E:\docu\sample' in text
+
+
+def test_applied_local_summary_stays_machine_owned_and_follows_new_facts(brain_root):
+    from brain.pages import parse_page
+    from brain.pipeline.summaries import apply_local_summary, summary_hash
+
+    _, path = page_and_facts(brain_root, [('uses', 'SQLite')])
+    result = apply_local_summary(brain_root, 'sample')
+    assert result['changed'] and result['commit']
+    page = parse_page(path)
+    assert 'SQLite' in page.compiled_truth
+    assert page.frontmatter.summary_hash == summary_hash(page.compiled_truth)
+    with closing(connect(brain_root / 'brain.db')) as conn, conn:
+        add_fact(conn, Fact(subject='sample', predicate='frontend_framework', object='React',
+                            object_type='literal', asserted_at=NOW + timedelta(minutes=5),
+                            source_event=EVENT, confidence=0.95))
+    assert 'React' in apply_local_summary(brain_root, 'sample')['compiled_truth']
+    assert apply_local_summary(brain_root, 'sample')['changed'] is False
+
+
+def test_apply_refuses_human_text_and_provider_combination(brain_root):
+    from typer.testing import CliRunner
+
+    from brain.cli.main import app
+    from brain.exceptions import BrainError
+    from brain.pipeline.summaries import apply_local_summary
+
+    _, path = page_and_facts(brain_root, [('uses', 'SQLite')])
+    path.write_text(path.read_text(encoding='utf-8').replace(
+        '(stub - waiting for more evidence)', 'My own words.'), encoding='utf-8')
+    with pytest.raises(BrainError, match='review draft'):
+        apply_local_summary(brain_root, 'sample')
+    assert 'My own words.' in path.read_text(encoding='utf-8')
+    result = CliRunner().invoke(app, ['summarize', 'sample', '--apply', '--provider',
+                                      '--brain-root', str(brain_root)])
+    assert result.exit_code != 0
+
+
 def test_approved_summary_is_recorded_in_the_ledger(brain_root):
     import json
 
