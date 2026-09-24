@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Reduce ingest review noise by retaining artifact/version objects as literal
+  facts, resolving only factual endpoints, and separating fact/entity thresholds.
+  Resolved human-approved pending facts no longer return for confidence review.
+- Treat free-form status observations as multi-valued; keep explicit lifecycle
+  states and other single-valued relationships conflict-checked.
+- Rank local summaries by topic and importance, mark unsupported evidence, add
+  a read-only summary preview, and supply accepted facts to provider drafts.
+- Preview existing-root runtime ignore rules through reconcile and honor scoped
+  automatic Git commits after applying a verified migration.
+- Repair Codex integration without losing foreign MCP tables, custom options or
+  proven skill-description edits. Use available local launchers and save verified
+  integration backups before application.
+- Block external DNS and UDP as well as TCP in tests and Python test children.
 - Keep event collection read-only, preserve retryable ingest work, and avoid
   advancing the main event cursor during targeted replay.
 - Stage and validate database rebuilds before publishing through SQLite's
@@ -27,8 +40,8 @@
 - Added `mem entity prune-stub` for safe cleanup of mistaken generated stub
   entity pages, and `mem review --quarantine-invalid --yes` for moving corrupt
   undecided review files out of the pending queue.
-- Changed review `defer` handling to archive deferred items and record the
-  decision without applying fact/page mutations.
+- Keep deferred review items pending and clear the decision checkbox without
+  applying fact/page mutations.
 - Added `mem-mcp-http` HTTP/SSE transport for opt-in remote MCP access.
 - Added optional shared-token authentication for HTTP/SSE requests.
 - Added a remote tool whitelist model for HTTP/SSE exposure, with high-risk

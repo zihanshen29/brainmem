@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import os
 import socket
 from pathlib import Path
@@ -21,6 +22,8 @@ def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
     """Providers must be mocked; allow only asyncio's local self-pipe IPC."""
     original = socket.socket.connect
     original_ex = socket.socket.connect_ex
+    original_lookup = socket.getaddrinfo
+    original_sendto = socket.socket.sendto
     guard = str(Path(__file__).parent / "offline")
     previous = os.environ.get("PYTHONPATH", "")
     monkeypatch.setenv("PYTHONPATH", guard + (os.pathsep + previous if previous else ""))
@@ -38,6 +41,23 @@ def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
         return original_ex(sock, address)
 
     monkeypatch.setattr(socket.socket, "connect_ex", connect_ex)
+
+    def getaddrinfo(host, *args, **kwargs):
+        if host not in {None, "localhost", b"localhost"}:
+            try:
+                ipaddress.ip_address(host.decode() if isinstance(host, bytes) else host)
+            except ValueError as exc:
+                raise AssertionError("External DNS disabled in BrainMem tests") from exc
+        return original_lookup(host, *args, **kwargs)
+
+    def sendto(sock, data, *args):
+        address = args[-1] if args else None
+        if not isinstance(address, tuple) or address[0] not in {"127.0.0.1", "::1"}:
+            raise AssertionError("Network is disabled in BrainMem tests")
+        return original_sendto(sock, data, *args)
+
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    monkeypatch.setattr(socket.socket, "sendto", sendto)
 
 
 @pytest.fixture()

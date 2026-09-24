@@ -36,6 +36,11 @@ It does not delete entities, normalize historical predicates, merge semantic
 lookalikes, clean archives, approve reviews or rewrite existing summaries.
 Those proposals are listed separately for human decisions.
 
+The plan also previews missing `/.brainmem/` and `/scratch/` ignore rules for
+older roots, preserving existing custom rules. It never untracks or deletes
+files. With `git.auto_commit = true`, apply commits only its changed paths and
+honors `git.track_database`. Unrelated staged work is rejected before mutation.
+
 `rebuild --db` now starts from a healthy database snapshot and preserves primary
 records. A missing or corrupt database requires restoration. `lint --all` is
 read-only and reports registry/source drift as well as contradictions; it no
@@ -48,18 +53,32 @@ or untouched generated pages. `summary_hash` records the generated text.
 Any edited summary, legacy non-placeholder summary, or `curated: true` page is
 protected from automatic replacement. Tier approval changes importance only.
 
+Local summaries consider all active facts, grouping direction/decisions ahead
+of progress, implementation, validation and version details. Each group is
+bounded so operational noise cannot displace the direction. Unknown relation
+types are retained in the database; incomplete drafts say so, and a draft with
+no supported relations is explicitly a placeholder. `output_language` selects
+the labels; literal evidence and names are preserved rather than translated.
+
 ```sh
+mem summarize project-slug --brain-root "${BRAIN_ROOT}" --dry-run
 mem summarize project-slug --brain-root "${BRAIN_ROOT}"
 # Only with permission to send allowed evidence to the configured model:
 mem summarize project-slug --brain-root "${BRAIN_ROOT}" --provider
 ```
 
-Both commands create a `summary_refresh` review with a diff. Approval verifies
+The first command previews locally without writing a page or review. It cannot
+be combined with `--provider`. The other commands create a `summary_refresh`
+review with a diff; provider drafts include accepted facts as well as timeline
+evidence and obey the privacy of their sources. Approval verifies
 the entire original page hash and refuses stale drafts. `rebuild --pages SLUG
 --force` is a compatibility shortcut for a local summary draft. Approval,
 rejection and application of reviews still need explicit user instruction.
 `defer` leaves the file pending, records the deferral and clears its checkbox.
 Rejected tier proposals require meaningful mention growth before reappearing.
+Approving a resolved pending fact bypasses its confidence gate, retaining its
+recorded confidence. A newly detected single-valued conflict still needs a
+separate decision; an already stored fact does not get reviewed again.
 
 ## Content-level provider boundaries
 
@@ -73,14 +92,23 @@ default = "provider-allowed"
 local_only_paths = ["raw/private/**", "laundry/private/**", "pages/private/**"]
 
 [ingest]
-confidence_auto_accept = 0.85
+confidence_auto_accept = 0.80
 confidence_auto_reject = 0.50
+entity_confidence_auto_accept = 0.85
 chunk_max_chars = 4000
 output_language = "source"
 
 [llm]
 max_output_tokens = 4096
 ```
+
+Fact acceptance and new-entity creation have separate thresholds. Existing
+explicit thresholds are preserved; review a configuration change before lowering
+them. Unused extracted mentions do not create entities or reviews. Concrete
+paths, files and versioned descriptions used as objects remain literal evidence
+unless an existing identity matches. Ambiguous durable identities still need
+review. Free-form `status` observations may coexist; use `lifecycle_state` for
+mutually exclusive states. Known single-valued predicates keep conflict checks.
 
 `default = "local-only"` disables provider use for the entire root. Local-only
 notes stay pending; they can still be searched locally. Page eligibility also
@@ -132,5 +160,5 @@ do not replace full database/raw-source backups.
 
 Run `pytest -p no:cacheprovider`, `ruff check src tests`, and `mypy src`.
 Tests use disposable roots, isolated lock directories, mocked providers and a
-socket guard that also reaches Python subprocesses. Loopback is reserved for
+socket/DNS/UDP guard that also reaches Python subprocesses. Loopback is reserved for
 local MCP tests and asyncio IPC; no live provider requests are permitted.
