@@ -10,7 +10,7 @@ from brain.ledger.reader import read_all
 from brain.mcp.formatters import to_jsonable
 from brain.models import PageType
 from brain.pages import parse_page
-from brain.paths import BrainPaths
+from brain.paths import BrainPaths, resolve_brain_root
 from brain.pipeline.ask import ask as _ask
 from brain.pipeline.capture import capture as _capture
 from brain.pipeline.review import list_pending as _list_pending
@@ -21,18 +21,18 @@ SOURCE_AGENT_RE = re.compile(r"^source_agent:\s*\S+", re.MULTILINE)
 SOURCE_CONTEXT_RE = re.compile(r"^source_context:\s*\S+", re.MULTILINE)
 
 
-def _root(brain_root: str | Path) -> Path:
-    return Path(brain_root).expanduser()
+def _root(brain_root: str | Path | None) -> Path:
+    return resolve_brain_root(brain_root)
 
 
-def brain_status(brain_root: str | Path = ".") -> dict[str, Any]:
+def brain_status(brain_root: str | Path | None = None) -> dict[str, Any]:
     """When to call: need a read-only local-only health summary of a BrainMem repository."""
     return to_jsonable(_collect_status(_root(brain_root)))
 
 
 def brain_ask(
     query: str,
-    brain_root: str | Path = ".",
+    brain_root: str | Path | None = None,
     top: int = 5,
     mode: str = "keyword-only",
     page_type: str | None = None,
@@ -59,7 +59,7 @@ def brain_capture(
     text: str,
     *,
     source_agent: str,
-    brain_root: str | Path = ".",
+    brain_root: str | Path | None = None,
     kind: str = "note",
     source: str = "stdin",
     source_ref: str | None = None,
@@ -87,7 +87,7 @@ def brain_capture(
 
 def brain_inject(
     query: str,
-    brain_root: str | Path = ".",
+    brain_root: str | Path | None = None,
     budget: int = 10000,
     output_format: str = "markdown",
     mode: str = "keyword-only",
@@ -115,7 +115,7 @@ def brain_inject(
 
 def brain_scratch_append(
     text: str,
-    brain_root: str | Path = ".",
+    brain_root: str | Path | None = None,
     source: str = "mcp",
 ) -> dict[str, Any]:
     """When to call: need to record local session-progress notes in scratch/working.md without promoting them to wiki truth."""
@@ -130,7 +130,7 @@ def brain_scratch_append(
 
 
 def brain_snapshot_rebuild(
-    brain_root: str | Path = ".",
+    brain_root: str | Path | None = None,
     max_items: int = 20,
     max_chars: int = 8000,
     strategy: str = "dedup",
@@ -149,7 +149,7 @@ def brain_snapshot_rebuild(
 
 @coordinated()
 def brain_procedure_list(
-    brain_root: str | Path = ".",
+    brain_root: str | Path | None = None,
     status: str | None = None,
     limit: int = 20,
 ) -> dict[str, Any]:
@@ -184,7 +184,7 @@ def brain_procedure_list(
 def brain_procedure_new(
     slug: str,
     title: str,
-    brain_root: str | Path = ".",
+    brain_root: str | Path | None = None,
     auto_commit: bool = False,
 ) -> dict[str, Any]:
     """When to call: need to create a new durable reusable procedure capsule from an explicit user or agent decision."""
@@ -203,7 +203,7 @@ def brain_procedure_run(
     slug: str,
     result: str,
     note: str,
-    brain_root: str | Path = ".",
+    brain_root: str | Path | None = None,
     auto_commit: bool = False,
 ) -> dict[str, Any]:
     """When to call: need to record whether a reusable procedure succeeded or failed after running it."""
@@ -222,7 +222,7 @@ def brain_procedure_run(
 def brain_procedure_promote(
     slug: str,
     status: str,
-    brain_root: str | Path = ".",
+    brain_root: str | Path | None = None,
     auto_commit: bool = False,
 ) -> dict[str, Any]:
     """When to call: need to manually set procedure maturity after user approval or clear evidence."""
@@ -238,7 +238,7 @@ def brain_procedure_promote(
 
 
 def brain_review_queue(
-    brain_root: str | Path = ".",
+    brain_root: str | Path | None = None,
     kind: str | None = None,
 ) -> dict[str, Any]:
     """When to call: need to list pending review items locally; this never approves, rejects, or applies decisions."""
@@ -248,7 +248,7 @@ def brain_review_queue(
 
 @coordinated()
 def brain_recent_events(
-    brain_root: str | Path = ".",
+    brain_root: str | Path | None = None,
     limit: int = 10,
     kind: str | None = None,
     entity_slug: str | None = None,

@@ -6,6 +6,7 @@ from typing import Annotated, Any
 import typer
 
 from brain.exceptions import BrainError
+from brain.paths import resolve_brain_root
 
 DEFAULT_MAX_ITEMS = 20
 DEFAULT_MAX_CHARS = 8000
@@ -63,7 +64,7 @@ def rebuild_command(
 
 
 def _root(brain_root: Path | None) -> Path:
-    return Path.cwd() if brain_root is None else brain_root
+    return resolve_brain_root(brain_root)
 
 
 def _run_rebuild(

@@ -7,6 +7,7 @@ import typer
 
 from brain.exceptions import BrainError
 from brain.models import ProcedureStatus
+from brain.paths import resolve_brain_root
 from brain.pipeline.procedure import ProcedureRunResult
 
 procedure_app = typer.Typer(
@@ -80,7 +81,7 @@ def promote_command(
 
 
 def _root(brain_root: Path | None) -> Path:
-    return Path.cwd() if brain_root is None else brain_root
+    return resolve_brain_root(brain_root)
 
 
 def _create(brain_root: Path, slug: str, *, title: str) -> Any:

@@ -8,9 +8,9 @@ from typing import Annotated, Any
 import typer
 
 from brain.concurrency import coordinated
-from brain.db.connection import connect, sqlite_uri
+from brain.db.connection import connect, connect_readonly
 from brain.exceptions import BrainError
-from brain.paths import BrainPaths
+from brain.paths import BrainPaths, resolve_brain_root
 
 
 def import_command(
@@ -57,7 +57,7 @@ def import_command(
 ) -> None:
     """Bulk import supported files into laundry."""
     try:
-        root = Path.cwd() if brain_root is None else brain_root
+        root = resolve_brain_root(brain_root)
         if sum([status, list_jobs_requested, abort_job_id is not None]) > 1:
             typer.echo("Error: select only one of --status, --list-jobs, or --abort", err=True)
             raise typer.Exit(1)
@@ -125,9 +125,16 @@ def _run_import(
             confirm_callback=confirm_callback,
         )
 
-    from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeRemainingColumn
+    from rich.progress import (
+        BarColumn,
+        Progress,
+        SpinnerColumn,
+        TaskID,
+        TextColumn,
+        TimeRemainingColumn,
+    )
 
-    task_id: int | None = None
+    task_id: TaskID | None = None
 
     with Progress(
         SpinnerColumn(),
@@ -255,7 +262,7 @@ def _format_job(job: Any) -> str:
 def _readonly_jobs_connection(brain_root: Path) -> sqlite3.Connection:
     paths = BrainPaths(Path(brain_root).expanduser().resolve())
     try:
-        conn = sqlite3.connect(sqlite_uri(paths.db_path, mode="ro"), uri=True)
+        conn = connect_readonly(paths.db_path)
         conn.row_factory = sqlite3.Row
     except sqlite3.Error as exc:
         raise BrainError(f"Could not open import jobs database: {paths.db_path}") from exc

@@ -7,6 +7,7 @@ from typing import Annotated, Any
 import typer
 
 from brain.exceptions import BrainError
+from brain.paths import resolve_brain_root
 
 
 class IngestSource(StrEnum):
@@ -81,7 +82,7 @@ def ingest_command(
             if source is IngestSource.EVENTS:
                 raise BrainError("--requeue-failed cannot be used with --source events")
             report = _run_requeue_failed(
-                Path.cwd() if brain_root is None else brain_root,
+                resolve_brain_root(brain_root),
                 limit=limit,
             )
             if verbose is not False:
@@ -91,7 +92,7 @@ def ingest_command(
             return
 
         report = _run_ingest(
-            Path.cwd() if brain_root is None else brain_root,
+            resolve_brain_root(brain_root),
             source=source.value,
             dry_run=dry_run,
             limit=limit,

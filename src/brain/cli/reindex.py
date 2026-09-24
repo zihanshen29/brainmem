@@ -6,6 +6,7 @@ from typing import Annotated, Any
 import typer
 
 from brain.exceptions import BrainError
+from brain.paths import resolve_brain_root
 
 
 def reindex_command(
@@ -32,7 +33,7 @@ def reindex_command(
 ) -> None:
     """Rebuild the embedding index for brain pages."""
     try:
-        root = Path.cwd() if brain_root is None else brain_root
+        root = resolve_brain_root(brain_root)
         report = _run_reindex(
             root,
             force=force,

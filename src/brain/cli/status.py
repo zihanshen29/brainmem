@@ -7,6 +7,7 @@ from typing import Annotated
 import typer
 
 from brain.exceptions import BrainError
+from brain.paths import resolve_brain_root
 from brain.pipeline.status import FileHealth, StatusReport, collect_status
 
 
@@ -22,7 +23,7 @@ def status_command(
 ) -> None:
     """Show read-only brain repository status."""
     try:
-        report = collect_status(Path.cwd() if brain_root is None else brain_root)
+        report = collect_status(resolve_brain_root(brain_root))
     except BrainError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc

@@ -7,6 +7,7 @@ import typer
 
 from brain.exceptions import BrainError
 from brain.models import PageType
+from brain.paths import resolve_brain_root
 from brain.pipeline.injection import OutputFormat
 
 DEFAULT_BUDGET = 10000
@@ -54,7 +55,7 @@ def inject_command(
     """Render token-aware context for prompt injection."""
     try:
         result = _run_inject(
-            Path.cwd() if brain_root is None else brain_root,
+            resolve_brain_root(brain_root),
             query=query,
             budget=budget,
             output_format=output_format,

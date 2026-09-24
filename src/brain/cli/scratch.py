@@ -6,6 +6,7 @@ from typing import Annotated, Any
 import typer
 
 from brain.exceptions import BrainError
+from brain.paths import resolve_brain_root
 
 scratch_app = typer.Typer(
     add_completion=False,
@@ -63,7 +64,7 @@ def _read_input(*, text: str | None, stdin: bool) -> str:
 
 
 def _root(brain_root: Path | None) -> Path:
-    return Path.cwd() if brain_root is None else brain_root
+    return resolve_brain_root(brain_root)
 
 
 def _run_append(brain_root: Path, text: str, *, source: str) -> Any:

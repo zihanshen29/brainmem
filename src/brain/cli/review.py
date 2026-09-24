@@ -10,6 +10,7 @@ import typer
 
 from brain.concurrency import root_lock
 from brain.exceptions import BrainError
+from brain.paths import resolve_brain_root
 
 
 def review_command(
@@ -96,7 +97,7 @@ def review_command(
 
 
 def _root(brain_root: Path | None) -> Path:
-    return Path.cwd() if brain_root is None else brain_root
+    return resolve_brain_root(brain_root)
 
 
 def _open_editor(path: Path) -> None:

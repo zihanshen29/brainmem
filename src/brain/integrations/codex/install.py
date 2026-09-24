@@ -379,6 +379,10 @@ def collect_integration_status(
         issues.append(f"global AGENTS managed policy is {agents_state}")
     if hook_state != "current":
         issues.append(f"UserPromptSubmit hook is {hook_state}")
+    try:
+        _check_owned_tables(config_text, MCP_START, MCP_END)
+    except BrainError as exc:
+        issues.append(str(exc))
     if mcp_state != "current":
         issues.append(f"BrainMem MCP config is {mcp_state}")
     if not config_valid:
@@ -662,6 +666,7 @@ def _check_unmanaged_mcp_conflict(text: str) -> None:
 
 
 def _upsert_marked_block(text: str, start: str, end: str, block: str) -> str:
+    _check_owned_tables(text, start, end)
     start_count = text.count(start)
     end_count = text.count(end)
     if start_count != end_count or start_count > 1:
@@ -677,6 +682,7 @@ def _upsert_marked_block(text: str, start: str, end: str, block: str) -> str:
 
 
 def _remove_marked_block(text: str, start: str, end: str) -> str:
+    _check_owned_tables(text, start, end)
     start_count = text.count(start)
     end_count = text.count(end)
     if start_count == 0 and end_count == 0:
@@ -690,6 +696,19 @@ def _remove_marked_block(text: str, start: str, end: str) -> str:
     if before.endswith("\n\n") and after.startswith("\n"):
         after = after[1:]
     return before + after
+
+
+def _check_owned_tables(text: str, start: str, end: str) -> None:
+    if start != MCP_START or start not in text or end not in text:
+        return
+    block = text[text.index(start) + len(start):text.index(end)]
+    try:
+        payload = tomllib.loads(block)
+    except tomllib.TOMLDecodeError as exc:
+        raise BrainError("Managed MCP block is not valid standalone TOML; move foreign settings outside it") from exc
+    servers = payload.get("mcp_servers", {})
+    if set(payload) - {"mcp_servers"} or not isinstance(servers, dict) or set(servers) - {"brainmem"}:
+        raise BrainError("Managed MCP block contains foreign configuration; move it outside the markers before updating")
 
 
 def _block_state(text: str, start: str, end: str, expected: str) -> str:

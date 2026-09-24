@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import sys
-import tomllib
 from collections.abc import Callable
 from contextlib import redirect_stderr
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from brain.paths import resolve_brain_root
 from brain.pipeline.ask import AskResult
 from brain.pipeline.retrieval.keyword import tokenize
 
@@ -214,28 +213,6 @@ def build_minimal_query(prompt: str, *, max_chars: int = DEFAULT_MAX_QUERY_CHARS
         return None
     return " ".join(selected)
 
-
-def resolve_brain_root(explicit: Path | None, *, home: Path | None = None) -> Path:
-    """Resolve explicit, environment, user-config, then default BrainMem root."""
-    if explicit is not None:
-        return explicit.expanduser().resolve()
-    env_root = os.environ.get("BRAIN_ROOT")
-    if env_root:
-        return Path(env_root).expanduser().resolve()
-
-    base_home = (home or Path.home()).expanduser()
-    user_config = base_home / ".config" / "brainmem" / "config.toml"
-    if user_config.is_file():
-        try:
-            payload = tomllib.loads(user_config.read_text(encoding="utf-8"))
-            configured = payload.get("data_root")
-            if configured is None and isinstance(payload.get("paths"), dict):
-                configured = payload["paths"].get("brain_root")
-            if isinstance(configured, str) and configured.strip():
-                return Path(configured).expanduser().resolve()
-        except (OSError, tomllib.TOMLDecodeError):
-            pass
-    return (base_home / "brain").resolve()
 
 
 def probe_prompt(

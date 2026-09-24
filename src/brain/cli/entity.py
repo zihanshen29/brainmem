@@ -7,6 +7,7 @@ from typing import Annotated, Any
 import typer
 
 from brain.exceptions import BrainError
+from brain.paths import resolve_brain_root
 
 
 class MergeInto(StrEnum):
@@ -92,13 +93,15 @@ def prune_stub_command(
 
 
 def _root(brain_root: Path | None) -> Path:
-    return Path.cwd() if brain_root is None else brain_root
+    return resolve_brain_root(brain_root)
 
 
 def _run_merge(root: Path, *, slug_a: str, slug_b: str, into: str) -> Any:
     from brain.pipeline.entity_merge import merge_entities
-
-    return merge_entities(root, slug_a, slug_b, into=into)
+    if into not in {"a", "b"}:
+        raise BrainError("into must be a or b")
+    from typing import Literal, cast
+    return merge_entities(root, slug_a, slug_b, into=cast(Literal["a", "b"], into))
 
 
 def _run_prune_stub(root: Path, *, slugs: list[str], delete_facts: bool) -> Any:

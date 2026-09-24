@@ -8,6 +8,7 @@ import typer
 from brain.exceptions import BrainError
 from brain.models import PageType
 from brain.pages.timeline import parse_entry
+from brain.paths import resolve_brain_root
 
 DEFAULT_TOP = 5
 
@@ -46,7 +47,7 @@ def ask_command(
     """Ask a question over pages in the current brain repository."""
     try:
         result = _run_ask(
-            Path.cwd() if brain_root is None else brain_root,
+            resolve_brain_root(brain_root),
             query=query,
             top=top,
             page_type=page_type,

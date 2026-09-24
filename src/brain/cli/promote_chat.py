@@ -6,6 +6,7 @@ from typing import Annotated, Any
 import typer
 
 from brain.exceptions import BrainError
+from brain.paths import resolve_brain_root
 
 
 def promote_chat_command(
@@ -29,10 +30,11 @@ def promote_chat_command(
             help="Override the conversation page slug.",
         ),
     ] = None,
+    brain_root: Annotated[Path | None, typer.Option("--brain-root")] = None,
 ) -> None:
     """Promote one AI chat ledger event into a conversation page."""
     try:
-        report = _run_promote_chat(Path.cwd(), event_id, title=title, slug=slug)
+        report = _run_promote_chat(resolve_brain_root(brain_root), event_id, title=title, slug=slug)
     except BrainError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc

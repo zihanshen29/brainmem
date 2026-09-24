@@ -11,6 +11,7 @@ from typing import Annotated, Any
 import typer
 
 from brain.exceptions import BrainError
+from brain.paths import resolve_brain_root
 from brain.pipeline.capture import VALID_KINDS, capture
 
 
@@ -68,7 +69,7 @@ def capture_command(
 
 
 def _root(brain_root: Path | None) -> Path:
-    return Path.cwd() if brain_root is None else brain_root
+    return resolve_brain_root(brain_root)
 
 
 def _run_capture(

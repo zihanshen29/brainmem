@@ -33,6 +33,15 @@ def test_repository_skill_has_only_required_trigger_frontmatter() -> None:
     assert "high-risk" in metadata
 
 
+def test_managed_block_with_foreign_tables_is_never_replaced():
+    from brain.integrations.codex.install import _remove_marked_block, _upsert_marked_block
+    original = MCP_START + '\n[mcp_servers.brainmem]\ncommand="mem-mcp"\n[mcp_servers.foreign]\ncommand="keep"\n' + MCP_END
+    with pytest.raises(BrainError, match="foreign configuration"):
+        _remove_marked_block(original, MCP_START, MCP_END)
+    with pytest.raises(BrainError, match="foreign configuration"):
+        _upsert_marked_block(original, MCP_START, MCP_END, "replacement")
+
+
 def _brain_root(tmp_path: Path) -> Path:
     root = tmp_path / "brain-root"
     (root / "pages").mkdir(parents=True)
