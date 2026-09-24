@@ -12,7 +12,6 @@ import hashlib
 import inspect
 import math
 import os
-import tempfile
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -45,14 +44,14 @@ def _held_roots() -> dict[str, bool]:
     return _local.roots
 
 
-def _lock_directory() -> Path:
+def _lock_directory(root: Path | None = None) -> Path:
     configured = os.environ.get("BRAINMEM_LOCK_DIR")
     directory = (
         Path(configured).expanduser().resolve()
         if configured
-        else Path(tempfile.gettempdir()) / "brainmem-locks"
+        else (root or Path.cwd()).resolve().parent / ".brainmem-locks"
     )
-    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    directory.mkdir(parents=True, exist_ok=True)
     return directory
 
 
@@ -92,7 +91,7 @@ def root_lock(
         return
 
     key = hashlib.sha256(identity.encode("utf-8")).hexdigest()
-    directory = _lock_directory()
+    directory = _lock_directory(canonical_root)
     deadline = time.monotonic() + timeout
     gate = _file_lock(directory / f"{key}.gate", shared=False, deadline=deadline)
     data: portalocker.Lock | None = None
@@ -112,11 +111,26 @@ def root_lock(
     try:
         held[identity] = write
         with configured_path(canonical_root / "config.toml"):
+            from brain.transactions import recover_pending
+            recover_pending(canonical_root, write=write)
             yield
     finally:
         held.pop(identity, None)
         if data is not None:
             data.release()
+
+
+@contextmanager
+def operation_lock(root: Path, name: str) -> Iterator[None]:
+    """Serialize one slow workflow without blocking captures and local readers."""
+    identity = os.path.normcase(str(root.resolve())) + ":" + name
+    key = hashlib.sha256(identity.encode()).hexdigest()
+    try:
+        with _file_lock(_lock_directory(root) / f"{key}.operation", shared=False,
+                        deadline=time.monotonic() + DEFAULT_LOCK_TIMEOUT):
+            yield
+    except portalocker.LockException as exc:
+        raise RootBusyError(f"Another {name} operation is running; retry later") from exc
 
 
 def coordinated(
@@ -132,7 +146,8 @@ def coordinated(
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
             bound = signature.bind(*args, **kwargs)
             bound.apply_defaults()
-            with root_lock(bound.arguments[root_parameter], write=write):
+            from brain.paths import resolve_brain_root
+            with root_lock(resolve_brain_root(bound.arguments[root_parameter]), write=write):
                 return function(*args, **kwargs)
 
         return wrapper

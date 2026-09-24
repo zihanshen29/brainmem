@@ -19,6 +19,8 @@ def write_page(path: Path, page: Page) -> None:
     """Render a page to markdown with YAML frontmatter and LF newlines."""
     validated = Page.model_validate(page)
     metadata = validated.frontmatter.model_dump(mode="json", exclude_none=True)
+    if not validated.frontmatter.curated:
+        metadata.pop("curated", None)
     body = _render_body(validated)
     rendered = frontmatter.dumps(frontmatter.Post(body, **metadata), sort_keys=False)
     _write_lf(path, _ensure_final_lf(rendered))
@@ -164,5 +166,5 @@ def _ensure_final_lf(text: str) -> str:
 
 
 def _write_lf(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8", newline="\n")
+    from brain.transactions import atomic_text
+    atomic_text(path, text)

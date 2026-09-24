@@ -1,5 +1,6 @@
 import tomllib
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -58,6 +59,8 @@ class IngestConfig(BaseModel):
 
     confidence_auto_accept: float = Field(..., ge=0.0, le=1.0)
     confidence_auto_reject: float = Field(..., ge=0.0, le=1.0)
+    chunk_max_chars: int = Field(default=4000, ge=256)
+    output_language: str = "source"
 
 
 class TierConfig(BaseModel):
@@ -93,6 +96,18 @@ class GitConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     auto_commit: bool
+    track_database: bool = False
+
+
+class PrivacyConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    default: Literal["provider-allowed", "local-only"] = "provider-allowed"
+    local_only_paths: list[str] = Field(default_factory=list)
+
+
+class LLMConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    max_output_tokens: int = Field(default=4096, ge=256)
 
 
 class EmbeddingConfig(BaseModel):
@@ -115,7 +130,7 @@ class RetrievalConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    default_mode: str = Field(default="hybrid", min_length=1)
+    default_mode: str = Field(default="keyword-only", min_length=1)
     rrf_k: int = Field(default=60, gt=0)
     top_per_path: int = Field(default=50, gt=0)
     final_top: int = Field(default=5, gt=0)
@@ -149,6 +164,8 @@ class Config(BaseModel):
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     import_: ImportConfig = Field(default_factory=ImportConfig, alias="import")
+    privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
+    llm: LLMConfig = Field(default_factory=LLMConfig)
 
     @model_validator(mode="after")
     def require_llm_provider(self) -> "Config":

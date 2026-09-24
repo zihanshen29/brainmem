@@ -1,6 +1,7 @@
 import re
 from datetime import datetime
 from enum import IntEnum, StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -53,6 +54,10 @@ class Frontmatter(BaseModel):
     success_count: int | None = None
     fail_count: int | None = None
     last_run: datetime | None = None
+    privacy: Literal["provider-allowed", "local-only"] | None = None
+    curated: bool = False
+    summary_hash: str | None = None
+    entity_type: Literal["person", "org", "concept", "project", "event", "place", "unknown"] | None = None
 
     @field_validator("slug")
     @classmethod
@@ -84,7 +89,7 @@ class Frontmatter(BaseModel):
                     "procedure pages must include status, success_count, and fail_count"
                 )
             for name in ("success_count", "fail_count"):
-                count = procedure_fields[name]
+                count = self.success_count if name == "success_count" else self.fail_count
                 if count is not None and count < 0:
                     raise ValueError(f"{name} must be non-negative")
         elif any(value is not None for value in procedure_fields.values()):

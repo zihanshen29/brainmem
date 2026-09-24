@@ -1,10 +1,47 @@
 import importlib
+import shutil
 import sqlite3
+import tempfile
 from contextlib import suppress
 from pathlib import Path
 from urllib.parse import urlencode
 
 from brain.exceptions import DBError
+
+
+class _SnapshotConnection(sqlite3.Connection):
+    snapshot_directory: tempfile.TemporaryDirectory | None = None
+
+    def close(self) -> None:
+        super().close()
+        if self.snapshot_directory is not None:
+            self.snapshot_directory.cleanup()
+            self.snapshot_directory = None
+
+
+def connect_readonly(path: Path) -> sqlite3.Connection:
+    """Read without creating or modifying source WAL/SHM files.
+
+    The caller's shared root lock stabilizes cooperating writers. A live WAL is
+    copied to a private temporary snapshot; immutable mode is used only without WAL.
+    """
+    wal = path.with_name(path.name + "-wal")
+    if not wal.is_file() or wal.stat().st_size == 0:
+        return sqlite3.connect(sqlite_uri(path, mode="ro", immutable=1), uri=True)
+    temporary = tempfile.TemporaryDirectory(prefix="brainmem-read-")
+    try:
+        stamps = [(p.stat().st_size, p.stat().st_mtime_ns) for p in (path, wal)]
+        target = Path(temporary.name) / path.name
+        shutil.copyfile(path, target)
+        shutil.copyfile(wal, target.with_name(target.name + "-wal"))
+        if stamps != [(p.stat().st_size, p.stat().st_mtime_ns) for p in (path, wal)]:
+            raise DBError("Database changed while reading; retry under the shared root lock")
+        conn = sqlite3.connect(sqlite_uri(target, mode="ro"), uri=True, factory=_SnapshotConnection)
+        conn.snapshot_directory = temporary
+        return conn
+    except BaseException:
+        temporary.cleanup()
+        raise
 
 
 def prepare_sqlite_extension() -> None:
@@ -34,7 +71,7 @@ def connect(path: Path, *, read_only: bool = False) -> sqlite3.Connection:
     conn = None
     try:
         conn = (
-            sqlite3.connect(sqlite_uri(path, mode="ro"), uri=True)
+            connect_readonly(path)
             if read_only else sqlite3.connect(Path(path))
         )
         conn.row_factory = sqlite3.Row

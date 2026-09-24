@@ -55,7 +55,7 @@ def test_init_creates_files_dirs_db_and_initial_commit(tmp_path: Path) -> None:
     assert "[embedding]" in config_text
     assert "[retrieval]" in config_text
     assert "[import]" in config_text
-    assert 'default_mode = "hybrid"' in config_text
+    assert 'default_mode = "keyword-only"' in config_text
     assert "rrf_k = 60" in config_text
     assert "top_per_path = 50" in config_text
     assert "final_top = 5" in config_text
@@ -81,7 +81,7 @@ def test_init_creates_files_dirs_db_and_initial_commit(tmp_path: Path) -> None:
     assert config.embedding.batch_size == 100
     assert config.embedding.chunk_max_chars == 1500
     assert config.embedding.unit_cost_per_1m_tokens == 0.02
-    assert config.retrieval.default_mode == "hybrid"
+    assert config.retrieval.default_mode == "keyword-only"
     assert config.retrieval.rrf_k == 60
     assert config.retrieval.top_per_path == 50
     assert config.retrieval.final_top == 5

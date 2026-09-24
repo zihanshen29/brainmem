@@ -1,5 +1,35 @@
+import os
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+
+
+def resolve_brain_root(explicit: Path | str | None = None, *, home: Path | None = None) -> Path:
+    """One resolver for CLI, MCP and hooks; a cwd is used only when it is a brain."""
+    if explicit is not None:
+        return Path(explicit).expanduser().resolve()
+    configured = os.environ.get("BRAIN_ROOT")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    cwd = Path.cwd()
+    if (cwd / "brain.db").is_file() and (cwd / "config.toml").is_file():
+        return cwd.resolve()
+    base_home = (home or Path.home()).expanduser()
+    config = base_home / ".config" / "brainmem" / "config.toml"
+    if config.is_file():
+        from brain.exceptions import BrainError
+        try:
+            payload = tomllib.loads(config.read_text(encoding="utf-8"))
+            configured = payload.get("data_root") or payload.get("paths", {}).get("brain_root")
+            if isinstance(configured, str) and configured.strip():
+                path = Path(configured).expanduser()
+                if not path.is_absolute():
+                    path = config.parent / path
+                return path.resolve()
+            raise BrainError("User BrainMem config has no data_root")
+        except (OSError, tomllib.TOMLDecodeError) as exc:
+            raise BrainError("Invalid user BrainMem root configuration") from exc
+    return (base_home / "brain").resolve()
 
 
 @dataclass(frozen=True)

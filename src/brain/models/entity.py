@@ -16,6 +16,7 @@ class EntityType(StrEnum):
     PROJECT = "project"
     EVENT = "event"
     PLACE = "place"
+    UNKNOWN = "unknown"
 
 
 class EntityAliasSource(StrEnum):

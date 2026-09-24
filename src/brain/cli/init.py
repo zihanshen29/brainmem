@@ -50,6 +50,9 @@ Key files:
 """
 
 GITIGNORE_TEMPLATE = """brain.log
+brain.db
+.brainmem/
+scratch/
 *.tmp
 *.db-wal
 *.db-shm
@@ -187,7 +190,7 @@ chunk_max_chars = 1500
 unit_cost_per_1m_tokens = 0.02
 
 [retrieval]
-default_mode = "hybrid"
+default_mode = "keyword-only"
 rrf_k = 60
 top_per_path = 50
 final_top = 5
@@ -216,6 +219,7 @@ stale_days = 90
 
 [git]
 auto_commit = true
+track_database = false
 """
 
 

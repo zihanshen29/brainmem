@@ -39,4 +39,5 @@ def append_log(brain_root: Path, message: str) -> None:
 
 
 def _write_lf(path: Path, text: str) -> None:
-    path.write_text(text, encoding="utf-8", newline="\n")
+    from brain.transactions import atomic_text
+    atomic_text(path, text)
