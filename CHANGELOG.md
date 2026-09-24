@@ -2,9 +2,10 @@
 
 ## Unreleased
 
-- Keep path, URL and file-name objects literal even when an older ingest
-  registered them as entities, and do not queue a fact review again while an
-  identical review is still pending.
+- Keep explicit path and URL objects literal when an older ingest registered
+  them as artifact entities; preserve known projects whose names have file
+  suffixes, such as Next.js. An identical pending fact review prevents re-queuing
+  only when object type and validity also match and the review payload is valid.
 - Count every fact left out of a local summary (not only unsupported
   relations), space Han text from Latin values, and record approved summary
   drafts in the event ledger with refreshed backlinks.

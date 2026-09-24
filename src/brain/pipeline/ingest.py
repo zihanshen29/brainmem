@@ -180,6 +180,9 @@ class ItemResult:
     timeline_written: set[tuple[str, str]] = field(default_factory=set)
 
 
+PendingReviewKey = tuple[str, str, str, str, FactObjectType, str | None, str | None]
+
+
 @dataclass
 class ReviewWriter:
     paths: BrainPaths
@@ -187,13 +190,13 @@ class ReviewWriter:
     date: str
     created_at: datetime
     next_seq: int
-    pending_keys: set[tuple[str, str, str, str]] | None = field(default=None, repr=False)
+    pending_keys: set[PendingReviewKey] | None = field(default=None, repr=False)
 
     def is_pending(self, kind: str, candidate: FactCandidate) -> bool:
         """Return True when an identical fact already waits for a decision of this kind."""
         if self.pending_keys is None:
             self.pending_keys = _pending_review_keys(self.paths.review_dir)
-        key = (kind, candidate.subject, candidate.predicate, str(candidate.object))
+        key = _review_fact_key(kind, candidate)
         if key in self.pending_keys:
             return True
         self.pending_keys.add(key)
@@ -922,14 +925,13 @@ def _incidental_value(name: str) -> bool:
 
 
 _ARTIFACT_RE = re.compile(
-    r"^(?:[a-zA-Z]:[\\/]|\\\\|https?://)|"
-    r"\.(?:md|txt|json|toml|ya?ml|py|ts|tsx|js|jsx|html|ps1|sh|pdf|docx?)$",
+    r"^(?:[a-zA-Z]:[\\/]|\\\\|https?://)",
     re.IGNORECASE,
 )
 
 
 def _artifact_value(name: str) -> bool:
-    """Paths, URLs and file names identify artifacts, never durable entities."""
+    """Recognize explicit path/URL titles; a file suffix alone may name a project."""
     return bool(_ARTIFACT_RE.search(name.strip()))
 
 
@@ -1809,29 +1811,28 @@ def _set_cursor(conn: sqlite3.Connection, source: str, last_processed: str) -> N
 _DEDUPED_REVIEW_KINDS = ("low_confidence_fact", "pending_fact", "fact_conflict")
 
 
-def _pending_review_keys(review_dir: Path) -> set[tuple[str, str, str, str]]:
+def _review_fact_key(kind: str, candidate: FactCandidate) -> PendingReviewKey:
+    return (kind, candidate.subject, candidate.predicate, candidate.object,
+            candidate.object_type, candidate.valid_from, candidate.valid_to)
+
+
+def _pending_review_keys(review_dir: Path) -> set[PendingReviewKey]:
     """Index fact reviews still waiting in the queue so restated facts are not re-queued."""
-    keys: set[tuple[str, str, str, str]] = set()
+    from brain.pipeline.review import ReviewStatus, parse_review_file
+
+    keys: set[PendingReviewKey] = set()
     if not review_dir.is_dir():
         return keys
     for path in review_dir.glob("*.md"):
-        kind = path.stem.split("_", maxsplit=2)[-1]
-        if kind not in _DEDUPED_REVIEW_KINDS:
-            continue
-        text = path.read_text(encoding="utf-8")
-        if not re.search(r"(?m)^status:\s*pending\s*$", text):
-            continue
-        match = re.search(r"(?ms)^```json\r?\n(.*?)^```", text)
-        if match is None:
-            continue
         try:
-            data = json.loads(match.group(1))
-        except json.JSONDecodeError:
+            decision = parse_review_file(path)
+        except Exception:
+            # Malformed files cannot stand in for a valid pending fact.
             continue
-        candidate = data.get("candidate", data) if isinstance(data, dict) else None
-        if isinstance(candidate, dict) and {"subject", "predicate", "object"} <= candidate.keys():
-            keys.add((kind, str(candidate["subject"]), str(candidate["predicate"]),
-                      str(candidate["object"])))
+        if (decision.kind.value in _DEDUPED_REVIEW_KINDS
+                and decision.status is ReviewStatus.PENDING
+                and not decision.errors and decision.candidate is not None):
+            keys.add(_review_fact_key(decision.kind.value, decision.candidate))
     return keys
 
 

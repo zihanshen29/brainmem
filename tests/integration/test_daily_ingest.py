@@ -2,6 +2,8 @@ from collections import Counter
 from contextlib import closing
 from datetime import UTC, datetime
 
+import pytest
+
 from brain.config import load_config
 from brain.db.connection import connect
 from brain.db.entities import upsert_entity
@@ -12,6 +14,7 @@ from brain.pipeline.ingest import (
     IngestReport,
     ReviewWriter,
     _apply_extraction,
+    _write_low_confidence_review,
     _write_pending_fact_review,
 )
 from brain.pipeline.review import apply_pending, list_pending
@@ -143,3 +146,50 @@ def test_restated_fact_is_not_queued_again_while_its_review_is_pending(brain_roo
     assert first.review_items_created == 1
     assert second.review_items_created == 0
     assert [item.kind.value for item in list_pending(brain_root)] == ['low_confidence_fact']
+
+
+def test_registered_framework_with_file_suffix_remains_an_entity(brain_root):
+    with closing(connect(brain_root / 'brain.db')) as conn, conn:
+        seed(conn)
+        upsert_entity(conn, Entity(id='next-js', title='Next.js', type='project',
+                                   page_path='pages/projects/next-js.md',
+                                   first_seen=NOW, last_seen=NOW))
+    report = apply(brain_root, SignalExtraction(facts=[
+        candidate(object='Next.js', object_type='entity', confidence=0.9),
+    ], timeline_summary='项目使用 Next.js。'))
+    assert report.facts_added == 1
+    with closing(connect(brain_root / 'brain.db')) as conn:
+        row = conn.execute('SELECT object, object_type FROM facts').fetchone()
+    assert tuple(row) == ('next-js', 'entity')
+
+
+@pytest.mark.parametrize('changes', [
+    {'object_type': 'number'},
+    {'valid_from': '2026-09-01'},
+    {'valid_to': '2026-10-01'},
+])
+def test_pending_review_keeps_distinct_types_and_validity(brain_root, changes):
+    with closing(connect(brain_root / 'brain.db')) as conn, conn:
+        seed(conn)
+    first = apply(brain_root, SignalExtraction(
+        facts=[candidate(object='10', confidence=0.7)], timeline_summary='初次提及。'))
+    second = apply(brain_root, SignalExtraction(facts=[
+        candidate(object='10', confidence=0.7, **changes),
+    ], timeline_summary='不同类型或时间范围的新事实。'))
+    assert first.review_items_created == 1
+    assert second.review_items_created == 1
+    assert len(list_pending(brain_root)) == 2
+
+
+def test_invalid_pending_payload_does_not_suppress_a_valid_fact(brain_root):
+    paths = BrainPaths(brain_root)
+    malformed = '''# Low confidence fact
+
+```json
+{"subject": "project", "predicate": "uses", "object": "SQLite"}
+```
+'''
+    ReviewWriter.create(paths, IngestReport()).write('low_confidence_fact', malformed)
+    report = IngestReport()
+    _write_low_confidence_review(ReviewWriter.create(paths, report), candidate(confidence=0.7))
+    assert report.review_items_created == 1
