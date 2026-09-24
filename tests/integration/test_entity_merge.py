@@ -322,6 +322,93 @@ def test_prune_stub_cli_accepts_brain_root(brain_root: Path, tmp_path: Path, mon
     assert "Entity prune summary:" in result.stdout
 
 
+def test_project_fragment_merge_keeps_real_text_and_drops_loser_vectors(brain_root: Path) -> None:
+    from brain.db.embeddings import upsert_embedding
+    from brain.models import EmbeddingChunk
+
+    _seed_project_pair(brain_root, canonical_truth="Hand written project record.")
+    with connect(brain_root / "brain.db") as conn:
+        upsert_embedding(
+            conn,
+            EmbeddingChunk(page_slug="step", chunk_kind="compiled_truth", chunk_id="main",
+                           text="stub", text_preview="stub"),
+            "hash-step",
+            [0.0] * 1536,
+            "text-embedding-3-small",
+        )
+        conn.commit()
+
+    report = entity_merge_pipeline.merge_entities(brain_root, "robot", "step", auto_commit=False)
+
+    page = parse_page(brain_root / "pages" / "projects" / "robot.md")
+    assert page.compiled_truth == "Hand written project record."
+    assert [line.split("]: ")[1] for line in page.timeline] == ["Robot started.", "Step D15 finished."]
+    assert "Step D15" in page.frontmatter.aliases
+    assert report.embeddings_deleted == 1
+    assert report.tier_proposals_updated == 0
+    assert _scalar(brain_root, "SELECT COUNT(*) FROM tier_proposals") == 0
+    assert _scalar(brain_root, "SELECT COUNT(*) FROM embedding_index WHERE page_slug = 'step'") == 0
+    assert _scalar(brain_root, "SELECT subject FROM facts") == "robot"
+    events = (brain_root / "events.jsonl").read_text(encoding="utf-8")
+    assert '"action":"entity_merge"' in events.replace(" ", "")
+    assert "entity merge: step -> robot" in (brain_root / "pages" / "log.md").read_text(encoding="utf-8")
+
+
+def test_merge_into_generated_summary_follows_moved_facts(brain_root: Path) -> None:
+    from brain.pipeline.summaries import summary_hash
+
+    _seed_project_pair(brain_root, canonical_truth="(stub - waiting for more evidence)")
+
+    entity_merge_pipeline.merge_entities(brain_root, "robot", "step", auto_commit=False)
+
+    page = parse_page(brain_root / "pages" / "projects" / "robot.md")
+    assert "SQLite" in page.compiled_truth and "stub" not in page.compiled_truth
+    assert page.frontmatter.summary_hash == summary_hash(page.compiled_truth)
+
+
+def _seed_project_pair(brain_root: Path, *, canonical_truth: str) -> None:
+    for slug, title, truth, line in [
+        ("robot", "Robot", canonical_truth, f"- 2026-04-01 [event:{ALICE_EVENT}]: Robot started."),
+        ("step", "Step D15", "(stub - waiting for more evidence)",
+         f"- 2026-04-02 [event:{ALLY_EVENT}]: Step D15 finished."),
+    ]:
+        write_page(
+            brain_root / "pages" / "projects" / f"{slug}.md",
+            Page(
+                frontmatter=Frontmatter(type=PageType.PROJECT, slug=slug, title=title,
+                                        created=_utc(1), updated=_utc(2)),
+                compiled_truth=truth,
+                timeline=[line],
+                sources=[],
+            ),
+        )
+    with connect(brain_root / "brain.db") as conn:
+        for slug, title in [("robot", "Robot"), ("step", "Step D15")]:
+            conn.execute(
+                """
+                INSERT INTO entities (id, type, title, page_path, tier, mention_count, first_seen, last_seen, metadata)
+                VALUES (?, 'project', ?, ?, 3, 0, ?, ?, '{}')
+                """,
+                (slug, title, f"pages/projects/{slug}.md", _utc(1).isoformat(), _utc(2).isoformat()),
+            )
+        conn.execute(
+            """
+            INSERT INTO facts (subject, predicate, object, object_type, asserted_at, source_event, confidence)
+            VALUES ('step', 'uses', 'SQLite', 'literal', ?, ?, 0.9)
+            """,
+            (_utc(3).isoformat(), ALLY_EVENT),
+        )
+        conn.execute(
+            """
+            INSERT INTO tier_proposals (entity_id, proposed_tier, current_tier, reason, proposed_at,
+                                        decided_at, decision, review_file)
+            VALUES ('step', 2, 3, 'mention_count 3 reached tier 2 threshold', ?, ?, 'rejected', 'review/x.md')
+            """,
+            (_utc(3).isoformat(), _utc(4).isoformat()),
+        )
+        conn.commit()
+
+
 def _seed_merge_fixture(brain_root: Path) -> None:
     _write_page(
         brain_root,

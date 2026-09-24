@@ -7,24 +7,30 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+import ulid
 from pydantic import BaseModel, ConfigDict, Field
 
 from brain.concurrency import coordinated
 from brain.config import load_config
 from brain.db.backlinks import replace_backlinks_for_page
 from brain.db.connection import connect
+from brain.db.embeddings import delete_page_embeddings
 from brain.exceptions import BrainError, ConfigError, DBError
-from brain.models import EntityAliasSource, EntityType, Page, PageType, Tier
-from brain.pages import parse_page, regenerate_index, write_page
+from brain.ledger import append_event
+from brain.models import EntityAliasSource, EntityType, Event, EventKind, Page, PageType, Tier
+from brain.pages import append_log, parse_page, regenerate_index, write_page
 from brain.pages.timeline import format_entry, parse_entry
 from brain.paths import BrainPaths
 from brain.pipeline._config import default_pipeline_config
 from brain.pipeline.autolink import extract_backlinks
+from brain.pipeline.summaries import STUB, refresh_generated_summary
 
 MergeDirection = Literal["a", "b"]
 
 _WIKILINK_PATTERN = re.compile(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")
 _MISSING = object()
+# Pages backed by an entity registry row; procedures and conversations are not.
+_MERGEABLE_TYPES = {PageType.ENTITY, PageType.PROJECT, PageType.CONCEPT}
 
 
 class EntityMergeReport(BaseModel):
@@ -40,6 +46,7 @@ class EntityMergeReport(BaseModel):
     facts_updated: int = 0
     backlinks_rebuilt: int = 0
     tier_proposals_updated: int = 0
+    embeddings_deleted: int = 0
     pages_touched: list[str] = Field(default_factory=list)
     index_rebuilt: bool = False
     committed: bool = False
@@ -65,10 +72,9 @@ def merge_entities(
     paths = BrainPaths(Path(brain_root))
     canonical_path, canonical_page = _resolve_unique_page(paths, canonical)
     loser_path, loser_page = _resolve_unique_page(paths, loser)
-    if canonical_page.frontmatter.type is not PageType.ENTITY:
-        raise BrainError(f"Page is not an entity page: {canonical}")
-    if loser_page.frontmatter.type is not PageType.ENTITY:
-        raise BrainError(f"Page is not an entity page: {loser}")
+    for slug, page in ((canonical, canonical_page), (loser, loser_page)):
+        if page.frontmatter.type not in _MERGEABLE_TYPES:
+            raise BrainError(f"Page is not an entity, project or concept page: {slug}")
 
     conn = connect(paths.db_path)
     try:
@@ -85,9 +91,7 @@ def merge_entities(
 
         merged_timeline = _merge_timeline(canonical_page.timeline, loser_page.timeline)
         # Preserve both authors' text. Summary refresh is a separate reviewed operation.
-        merged_truth = canonical_page.compiled_truth
-        if loser_page.compiled_truth and loser_page.compiled_truth != merged_truth:
-            merged_truth += "\n\n" + loser_page.compiled_truth
+        merged_truth, merged_summary_hash = _merge_truth(canonical_page, loser_page)
 
         now = _now_utc()
         report = EntityMergeReport(
@@ -102,6 +106,7 @@ def merge_entities(
             aliases=[alias for alias, _ in alias_transfers],
             timeline=merged_timeline,
             compiled_truth=merged_truth,
+            summary_hash=merged_summary_hash,
             updated=now,
         )
 
@@ -139,6 +144,11 @@ def merge_entities(
                     now=now,
                     report=report,
                 )
+                # The loser's facts now belong to the canonical page; a machine-owned
+                # summary follows them, while edited or curated text stays untouched.
+                refresh_generated_summary(
+                    conn, canonical_path, canonical, output_language=_output_language(paths)
+                )
                 report.backlinks_rebuilt = _replace_all_backlinks(conn, paths)
         except sqlite3.Error as exc:
             _restore_files(page_snapshot)
@@ -152,13 +162,62 @@ def merge_entities(
 
     report.pages_touched = sorted(set(report.pages_touched))
     report.aliases_added = sorted(set(report.aliases_added))
+    _record_merge_event(paths, report)
+    append_log(
+        paths.root,
+        f"- {_now_utc().strftime('%Y-%m-%d %H:%M')} entity merge: {loser} -> {canonical}",
+    )
     report.committed = _maybe_commit(
         paths,
         auto_commit,
         f"entity merge: {slug_a} + {slug_b} -> {canonical}",
-        [paths.db_path, *[paths.root / touched for touched in report.pages_touched]],
+        [
+            paths.db_path,
+            paths.events_jsonl,
+            paths.pages_log,
+            *[paths.root / touched for touched in report.pages_touched],
+        ],
     )
     return report
+
+
+def _merge_truth(canonical: Page, loser: Page) -> tuple[str, str | None]:
+    """Keep real text from both sides; a generated placeholder carries nothing to keep."""
+    kept = [page for page in (canonical, loser) if page.compiled_truth.strip() not in {"", STUB}]
+    if not kept:
+        return canonical.compiled_truth, canonical.frontmatter.summary_hash
+    if len(kept) == 1 or kept[0].compiled_truth == kept[1].compiled_truth:
+        # One side's text survives unchanged, so its ownership marker still describes it.
+        return kept[0].compiled_truth, kept[0].frontmatter.summary_hash
+    return kept[0].compiled_truth + "\n\n" + kept[1].compiled_truth, None
+
+
+def _output_language(paths: BrainPaths) -> str:
+    try:
+        return load_config(paths.config_path).ingest.output_language
+    except ConfigError:
+        return default_pipeline_config().ingest.output_language
+
+
+def _record_merge_event(paths: BrainPaths, report: EntityMergeReport) -> None:
+    append_event(
+        paths.events_jsonl,
+        Event(
+            id=str(ulid.ULID()),
+            timestamp=_now_utc(),
+            kind=EventKind.PAGE_EDITED,
+            source_ref=f"entity_merge:{report.loser}->{report.canonical}",
+            affected_pages=report.pages_touched,
+            metadata={
+                "action": "entity_merge",
+                "canonical": report.canonical,
+                "loser": report.loser,
+                "facts_updated": report.facts_updated,
+                "aliases_added": report.aliases_added,
+                "embeddings_deleted": report.embeddings_deleted,
+            },
+        ),
+    )
 
 
 def _apply_db_merge(
@@ -199,9 +258,14 @@ def _apply_db_merge(
     _merge_backlink_rows(conn, canonical=canonical, loser=loser)
     report.tier_proposals_updated = _execute_count(
         conn,
-        "UPDATE tier_proposals SET entity_id = ? WHERE entity_id = ?",
+        "UPDATE tier_proposals SET entity_id = ? WHERE entity_id = ? AND decision IS NULL",
         (canonical, loser),
     )
+    # A decided proposal judged the loser; moving it would give the kept entity a
+    # rejection cooldown it never had. The decision stays in the review archive and ledger.
+    conn.execute("DELETE FROM tier_proposals WHERE entity_id = ?", (loser,))
+    # The loser page is deleted; its chunks would otherwise surface as orphaned hits.
+    report.embeddings_deleted = delete_page_embeddings(conn, loser)
 
     first_seen = min(_parse_datetime(canonical_row["first_seen"]), _parse_datetime(loser_row["first_seen"]))
     last_seen = max(now, _parse_datetime(canonical_row["last_seen"]), _parse_datetime(loser_row["last_seen"]))
@@ -234,6 +298,7 @@ def _merge_page(
     aliases: list[str],
     timeline: list[str],
     compiled_truth: str,
+    summary_hash: str | None,
     updated: datetime,
 ) -> Page:
     frontmatter = canonical_page.frontmatter
@@ -251,6 +316,7 @@ def _merge_page(
                 update={
                     "aliases": merged_aliases,
                     "tier": tier,
+                    "summary_hash": summary_hash,
                     "updated": updated,
                 }
             ),
