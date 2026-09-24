@@ -111,7 +111,9 @@ Query BrainMem when:
 - A task would materially benefit from durable context that is unlikely to be in
   the current repository or conversation.
 
-Prefer local-only retrieval first. Use explicit hybrid `mem ask` only when the
+Prefer local-only retrieval first and always pass `--mode keyword-only` for it:
+plain `mem ask` follows the root's `retrieval.default_mode`, which may be
+hybrid. Use `mem ask` without that flag, or with `--mode hybrid`, only when the
 user has allowed provider-backed retrieval or when the content is not sensitive
 and permission is clear from the request.
 
@@ -149,7 +151,8 @@ Local-only commands:
 
 Provider-backed commands that need clear permission for sensitive content:
 
-- explicit hybrid `mem ask "query" --mode hybrid`
+- `mem ask "query"` without `--mode keyword-only` (the root's default mode may be
+  hybrid), and `mem ask "query" --mode hybrid`
 - semantic `mem ask`
 - `mem ask "query" --explain`
 - `mem ingest`

@@ -8,6 +8,9 @@
 - Count every fact left out of a local summary (not only unsupported
   relations), space Han text from Latin values, and record approved summary
   drafts in the event ledger with refreshed backlinks.
+- Skill guidance no longer implies plain `mem ask` is local: it follows the
+  root's `retrieval.default_mode`, so local recall must pass
+  `--mode keyword-only`.
 - Reduce ingest review noise by retaining artifact/version objects as literal
   facts, resolving only factual endpoints, and separating fact/entity thresholds.
   Resolved human-approved pending facts no longer return for confidence review.
