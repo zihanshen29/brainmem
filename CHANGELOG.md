@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add `mem entity literalize`: a dry-run plan, current verified backup and exact
+  plan match turn mistaken path/file entities into literal fact values, with an
+  optional predicate correction and a ledger record. Add `code_path` ("代码位置").
+- `mem entity merge` accepts project and concept pages, no longer appends a stub
+  placeholder to the kept page, deletes the loser's vectors, records the merge in
+  the ledger and lets a machine-owned summary follow the moved facts. Only pending
+  tier proposals move; a decided one no longer hands its cooldown to the kept entity.
+- `mem summarize SLUG --apply` writes the local summary of a stub or unedited
+  generated page directly; it stays machine-owned and follows later facts.
 - Keep explicit path and URL objects literal when an older ingest registered
   them as artifact entities; preserve known projects whose names have file
   suffixes, such as Next.js. An identical pending fact review prevents re-queuing

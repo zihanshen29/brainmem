@@ -41,6 +41,30 @@ older roots, preserving existing custom rules. It never untracks or deletes
 files. With `git.auto_commit = true`, apply commits only its changed paths and
 honors `git.track_database`. Unrelated staged work is rejected before mutation.
 
+### Artifact entities and project fragments
+
+Older ingests registered some paths and file names as entities. Turn them into
+literal fact values with the same reviewed-plan pattern:
+
+```sh
+mem entity literalize e-docu-sample-dir report-md --predicate 523=code_path \
+  --brain-root "${BRAIN_ROOT}" --output /backups/literalize.json
+mem entity literalize --apply --plan /backups/literalize.json \
+  --backup /backups/brain-before.zip --brain-root "${BRAIN_ROOT}"
+```
+
+Referencing facts keep their evidence and receive the entity title as a literal
+value; `--predicate` corrects a mislabeled relation in the same step. The
+registry row, aliases, backlinks and vectors of each entity are removed and the
+change is recorded in the ledger. Entities used as fact subjects or that still
+have a page are refused: merge them or prune the stub instead. Ids that are
+already gone are listed as `absent`, so re-planning after apply shows no work.
+
+`mem entity merge` also accepts project and concept pages, so an extracted
+sub-stage can be folded into its real project. A placeholder summary is never
+appended to the kept page, the loser's vectors are deleted, the merge is
+recorded in the ledger, and a machine-owned summary follows the moved facts.
+
 `rebuild --db` now starts from a healthy database snapshot and preserves primary
 records. A missing or corrupt database requires restoration. `lint --all` is
 read-only and reports registry/source drift as well as contradictions; it no
@@ -62,13 +86,17 @@ the labels; literal evidence and names are preserved rather than translated.
 
 ```sh
 mem summarize project-slug --brain-root "${BRAIN_ROOT}" --dry-run
+mem summarize project-slug --brain-root "${BRAIN_ROOT}" --apply
 mem summarize project-slug --brain-root "${BRAIN_ROOT}"
 # Only with permission to send allowed evidence to the configured model:
 mem summarize project-slug --brain-root "${BRAIN_ROOT}" --provider
 ```
 
 The first command previews locally without writing a page or review. It cannot
-be combined with `--provider`. The other commands create a `summary_refresh`
+be combined with `--provider`. `--apply` writes the local summary at once when
+the page is a stub or still holds unedited generated text; the text stays
+machine-owned, so later accepted facts keep refreshing it. Edited, approved and
+curated summaries are refused. The remaining commands create a `summary_refresh`
 review with a diff; provider drafts include accepted facts as well as timeline
 evidence and obey the privacy of their sources. Approval verifies
 the entire original page hash and refuses stale drafts. `rebuild --pages SLUG

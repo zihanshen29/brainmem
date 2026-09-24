@@ -13,7 +13,9 @@ mem lint [--<kind>|--all]      # 执行 lint 检查
 mem promote-chat <event-id>    # 提升 AI 对话为页面
 mem rebuild --<scope>          # 重建派生数据
 mem status                     # 仓库状态
-mem entity merge <a> <b>       # 合并实体
+mem entity merge <a> <b>       # 合并实体（也可把项目子阶段并入真实项目）
+mem entity literalize <id>...  # 把误登记成实体的路径/文件名改为普通值（默认 dry-run）
+mem summarize <slug> --apply   # 按已接受事实直接写入机器摘要，之后随新事实更新
 mem capture [<kind>]           # 快速记录入口
 
 # Phase 2 (新增)
