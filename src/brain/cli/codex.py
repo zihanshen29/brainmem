@@ -99,8 +99,8 @@ def install_command(
         typer.Option(
             "--archive-legacy-skill",
             help=(
-                "Move an active ~/.codex/skills/brain-memory directory to a reversible "
-                ".disabled-by-brainmem archive."
+                "Move a legacy BrainMem skill (including an old disabled archive) "
+                "outside the skill search directories, preserving a reversible archive."
             ),
         ),
     ] = False,

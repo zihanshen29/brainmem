@@ -44,7 +44,10 @@ mem codex install --brain-root "${BRAIN_ROOT}" --replace-skill \
 ```
 
 This atomically moves the complete legacy directory to
-`~/.codex/skills/brain-memory.disabled-by-brainmem`. The manifest records the
+`~/.codex/brainmem/archives/brain-memory`, outside the skill search directories.
+The same option also migrates an existing `brain-memory.disabled-by-brainmem`
+directory left under `~/.codex/skills` by older versions. Doctor reports that
+old location as a duplicate until it is migrated. The manifest records the
 move, and `mem codex uninstall --yes` restores it when the original path is
 still free. Existing archive destinations are never overwritten.
 

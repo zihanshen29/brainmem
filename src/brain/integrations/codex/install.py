@@ -80,7 +80,8 @@ def integration_paths(
         "skill": agents / "skills" / SKILL_NAME / "SKILL.md",
         "legacy_skill_dir": codex / "skills" / SKILL_NAME,
         "legacy_skill": codex / "skills" / SKILL_NAME / "SKILL.md",
-        "legacy_archive": codex / "skills" / f"{SKILL_NAME}.disabled-by-brainmem",
+        "legacy_archive": codex / "brainmem" / "archives" / SKILL_NAME,
+        "legacy_discoverable_archive": codex / "skills" / f"{SKILL_NAME}.disabled-by-brainmem",
         "hooks": codex / "hooks.json",
         "config": codex / "config.toml",
         "agents": codex / "AGENTS.md",
@@ -186,7 +187,11 @@ def install_integration(
         paths["legacy_skill"].is_file()
         and paths["legacy_skill"].resolve() != skill_path.resolve()
     )
-    move_legacy = legacy_active and archive_legacy_skill
+    legacy_discoverable = (paths["legacy_discoverable_archive"] / "SKILL.md").is_file()
+    legacy_source = paths["legacy_skill_dir"] if legacy_active else paths["legacy_discoverable_archive"]
+    move_legacy = (legacy_active or legacy_discoverable) and archive_legacy_skill
+    if legacy_active and legacy_discoverable and archive_legacy_skill:
+        conflicts.append("both legacy skill directories exist; resolve the duplicate archives first")
     if move_legacy:
         if paths["legacy_archive"].exists():
             conflicts.append(
@@ -195,9 +200,9 @@ def install_integration(
             )
         else:
             actions.append("archive active legacy skill reversibly")
-    elif legacy_active:
+    elif legacy_active or legacy_discoverable:
         warnings.append(
-            f"duplicate legacy skill detected at {paths['legacy_skill']}; Codex does not merge "
+            f"duplicate legacy skill detected at {legacy_source}; Codex does not merge "
             "same-name skills. Rerun with --archive-legacy-skill to move its directory to "
             f"{paths['legacy_archive']} without deleting it"
         )
@@ -283,15 +288,15 @@ def install_integration(
         _atomic_write_text(paths["config"], merged_config)
         if move_legacy:
             paths["legacy_archive"].parent.mkdir(parents=True, exist_ok=True)
-            os.replace(paths["legacy_skill_dir"], paths["legacy_archive"])
+            os.replace(legacy_source, paths["legacy_archive"])
             moved_legacy = True
         _atomic_write_text(
             paths["manifest"], json.dumps(next_manifest, ensure_ascii=False, indent=2) + "\n"
         )
     except OSError as exc:
-        if moved_legacy and not paths["legacy_skill_dir"].exists():
+        if moved_legacy and not legacy_source.exists():
             with suppress(OSError):
-                os.replace(paths["legacy_archive"], paths["legacy_skill_dir"])
+                os.replace(paths["legacy_archive"], legacy_source)
         _restore_paths(originals)
         raise BrainError(f"could not install Codex integration: {exc}") from exc
     return report
@@ -357,7 +362,7 @@ def collect_integration_status(
     legacy_duplicate = (
         paths["legacy_skill"].is_file()
         and paths["legacy_skill"].resolve() != paths["skill"].resolve()
-    )
+    ) or (paths["legacy_discoverable_archive"] / "SKILL.md").is_file()
     legacy_archive_present = paths["legacy_archive"].is_dir()
     root_valid = (root / "config.toml").is_file() and (root / "pages").is_dir()
     commands = {
@@ -454,10 +459,14 @@ def uninstall_integration(
         actions.append("remove integration manifest")
 
     legacy_manifest = manifest.get("legacy_skill")
+    # Support uninstalling installations made before archives left the skill search root.
+    restore_archive = paths["legacy_archive"]
+    if not restore_archive.is_dir():
+        restore_archive = paths["legacy_discoverable_archive"]
     restore_legacy = (
         isinstance(legacy_manifest, dict)
         and legacy_manifest.get("archived") is True
-        and paths["legacy_archive"].is_dir()
+        and restore_archive.is_dir()
         and not paths["legacy_skill_dir"].exists()
     )
     if restore_legacy:
@@ -465,12 +474,12 @@ def uninstall_integration(
     elif (
         isinstance(legacy_manifest, dict)
         and legacy_manifest.get("archived") is True
-        and paths["legacy_archive"].is_dir()
+        and restore_archive.is_dir()
         and paths["legacy_skill_dir"].exists()
     ):
         warnings.append(
             f"left legacy archive in place because its original path is occupied: "
-            f"{paths['legacy_archive']}"
+            f"{restore_archive}"
         )
 
     report = {"applied": apply, "actions": actions, "warnings": warnings}
@@ -491,14 +500,14 @@ def uninstall_integration(
         if stripped_config != config_text:
             _atomic_write_text(paths["config"], stripped_config)
         if restore_legacy:
-            os.replace(paths["legacy_archive"], paths["legacy_skill_dir"])
+            os.replace(restore_archive, paths["legacy_skill_dir"])
             restored_legacy = True
         if paths["manifest"].is_file():
             paths["manifest"].unlink()
     except OSError as exc:
-        if restored_legacy and not paths["legacy_archive"].exists():
+        if restored_legacy and not restore_archive.exists():
             with suppress(OSError):
-                os.replace(paths["legacy_skill_dir"], paths["legacy_archive"])
+                os.replace(paths["legacy_skill_dir"], restore_archive)
         _restore_paths(originals)
         raise BrainError(f"could not uninstall Codex integration: {exc}") from exc
     return report

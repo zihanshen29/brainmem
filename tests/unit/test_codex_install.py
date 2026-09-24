@@ -243,7 +243,7 @@ def test_install_can_reversibly_archive_legacy_skill(tmp_path: Path) -> None:
         apply=True,
     )
 
-    archive = codex_home / "skills" / "brain-memory.disabled-by-brainmem"
+    archive = codex_home / "brainmem" / "archives" / "brain-memory"
     assert not legacy_dir.exists()
     assert (archive / "SKILL.md").read_text(encoding="utf-8") == "legacy skill"
     assert (archive / "user-resource.txt").read_text(encoding="utf-8") == "preserve me"

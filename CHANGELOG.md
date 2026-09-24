@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Keep event collection read-only, preserve retryable ingest work, and avoid
+  advancing the main event cursor during targeted replay.
+- Stage and validate database rebuilds before publishing through SQLite's
+  transactional backup API; preserve the original database on failure.
+- Add approved conflict/low-confidence evidence to page timelines and sources,
+  including pages not yet created, so local recall sees approved facts.
+- Reject missing configured provider keys instead of inheriting another
+  provider's credentials; preserve absolute import sources and validate hashes
+  on resume, with cumulative job progress.
+- Inject complete scratch bodies within budget, use the latest timeline entries,
+  and honor snapshot exclusion and deduplication across retrieval paths.
+- Move legacy Codex skills outside skill discovery roots, including migration of
+  older disabled archives; run HTTP tools in a serialized worker off the SSE loop.
+- Report current/stale/missing embedding chunks by content hash and label
+  recorded costs as embedding-only.
 - Fixed ingest robustness for non-material ledger events, near-valid signal
   extraction payloads, failed laundry quarantine, and noisy transient entity
   stub creation.

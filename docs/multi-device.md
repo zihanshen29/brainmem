@@ -166,6 +166,11 @@ endpoint.
 
 ## Remote Tool Exposure
 
+Synchronous pipelines run in a worker thread so slow disk or provider calls do
+not block the SSE event loop or heartbeats. Calls are serialized per server to
+protect file writes and process-wide provider configuration. This does not
+coordinate separate CLI processes; run database rebuilds during a quiet period.
+
 Remote mode exposes only a whitelist of tools. The intent is to keep everyday
 read and low-risk write workflows usable while avoiding high-impact review
 actions over a network transport.
