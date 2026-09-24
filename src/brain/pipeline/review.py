@@ -449,14 +449,19 @@ def apply_decision(conn: sqlite3.Connection, decision: ReviewDecision) -> Review
     if decision.kind is ReviewKind.PROCEDURE_CANDIDATE:
         return _approve_procedure_candidate(conn, paths, decision, report)
     if decision.kind is ReviewKind.SUMMARY_REFRESH:
-        return _approve_summary(paths, decision, report)
+        return _approve_summary(conn, paths, decision, report)
 
     report.errors.append(f"Approve is not implemented for review kind: {decision.kind.value}")
     report.skipped = True
     return report
 
 
-def _approve_summary(paths: BrainPaths, decision: ReviewDecision, report: ReviewApplyReport):
+def _approve_summary(
+    conn: sqlite3.Connection,
+    paths: BrainPaths,
+    decision: ReviewDecision,
+    report: ReviewApplyReport,
+):
     path = (paths.root / str(decision.data.get("page_path", ""))).resolve()
     if not path.is_relative_to(paths.pages_dir.resolve()) or not path.is_file():
         raise BrainError("Invalid summary page path")
@@ -470,7 +475,13 @@ def _approve_summary(paths: BrainPaths, decision: ReviewDecision, report: Review
     page.frontmatter.summary_hash = None  # Approved text becomes human-controlled.
     page.frontmatter.updated = _now_utc()
     write_page(path, page)
-    report.pages_touched.append(path.relative_to(paths.root).as_posix())
+    relative = path.relative_to(paths.root).as_posix()
+    report.pages_touched.append(relative)
+    ingest_pipeline = importlib.import_module("brain.pipeline.ingest")
+    with conn:
+        # Approved text may add or drop wikilinks, and every decision belongs in the ledger.
+        ingest_pipeline._rebuild_touched_backlinks(conn, paths, [relative])
+        _record_review_event(paths, decision, "approved", report)
     report.archived_path = _mark_and_archive(decision.path, ReviewStatus.APPROVED, decision.action)
     report.applied = True
     return report

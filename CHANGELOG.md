@@ -5,6 +5,9 @@
 - Keep path, URL and file-name objects literal even when an older ingest
   registered them as entities, and do not queue a fact review again while an
   identical review is still pending.
+- Count every fact left out of a local summary (not only unsupported
+  relations), space Han text from Latin values, and record approved summary
+  drafts in the event ledger with refreshed backlinks.
 - Reduce ingest review noise by retaining artifact/version objects as literal
   facts, resolving only factual endpoints, and separating fact/entity thresholds.
   Resolved human-approved pending facts no longer return for confidence review.

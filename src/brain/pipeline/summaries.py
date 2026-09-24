@@ -61,17 +61,24 @@ def summary_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _cjk_join(prefix: str, value: str) -> str:
+    # Chinese typesetting keeps a space between Han text and Latin words or digits.
+    if prefix and value and "一" <= prefix[-1] <= "鿿" and value[0].isascii() and value[0].isalnum():
+        return f"{prefix} {value}"
+    return f"{prefix}{value}"
+
+
 def _phrase(predicate: str, label: str, value: str, chinese: bool) -> str:
     if not chinese:
         return value if predicate == "status" else f"{predicate.replace('_', ' ')}: {value}"
     if predicate == "status":
         return value
     if predicate == "decided":
-        return f"已决定{value}"
+        return _cjk_join("已决定", value)
     if predicate in {"uses", "prefers", "runs_on", "works_at", "related_to", "passed", "completed"}:
-        return f"{label}{value}"
+        return _cjk_join(label, value)
     if predicate in {"backend_framework", "frontend_framework"}:
-        return f"{label}使用{value}"
+        return _cjk_join(f"{label}使用", value)
     if predicate == "released_on":
         return f"于 {value} 发布"
     return f"{label}为 {value}"
@@ -85,13 +92,13 @@ def evidence_summary(conn, page, output_language: str = "source") -> str:
     )
     if rows:
         groups: dict[int, list[str]] = {}
-        unsupported = 0
+        omitted = 0  # unsupported relations plus facts beyond each group's display limit
         for row in rows:
             predicate = normalize_predicate(row["predicate"])
             entry = VOCABULARY.get(predicate)
             label = SUMMARY_LABELS.get(predicate) or (entry[2] if entry else None)
             if label is None:
-                unsupported += 1
+                omitted += 1
                 continue
             value = row["object"]
             if row["object_type"] == "entity":
@@ -101,8 +108,12 @@ def evidence_summary(conn, page, output_language: str = "source") -> str:
             phrase = _phrase(predicate, label, value, chinese)
             group = groups.setdefault(_group(predicate), [])
             phrase = phrase.rstrip("。.")
-            if phrase not in group and len(group) < 3:
+            if phrase in group:
+                continue
+            if len(group) < 3:
                 group.append(phrase)
+            else:
+                omitted += 1
         paragraphs = [
             f"{GROUPS[key][0 if chinese else 1]}：" + "；".join(values) + "。" if chinese
             else f"{GROUPS[key][1]}: " + "; ".join(values) + "."
@@ -111,9 +122,9 @@ def evidence_summary(conn, page, output_language: str = "source") -> str:
         if not paragraphs:
             return (f"本地摘要占位：已有 {len(rows)} 条事实，但这些关系尚未支持自然语言整理。请查看时间线，或生成模型摘要草稿。"
                     if chinese else f"Local summary placeholder: {len(rows)} accepted facts use unsupported relations. Consult the timeline or request a provider draft.")
-        if unsupported:
-            paragraphs.append(f"另有 {unsupported} 条事实尚未转写为自然语言；可生成模型摘要草稿补充。" if chinese
-                              else f"{unsupported} additional facts are not rendered locally; a provider draft can include them.")
+        if omitted:
+            paragraphs.append(f"另有 {omitted} 条事实未列入本地摘要；可查看时间线或生成模型摘要草稿补充。" if chinese
+                              else f"{omitted} more facts are not listed in this local summary; see the timeline or request a provider draft.")
         return "\n\n".join(paragraphs)
     descriptions = []
     for line in reversed(page.timeline):

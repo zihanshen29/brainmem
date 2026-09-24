@@ -92,3 +92,36 @@ def test_provider_draft_checks_fact_sources_missing_from_page(brain_root, monkey
     monkeypatch.setattr('brain.llm.client.rewrite_compiled_truth', lambda *args: pytest.fail('provider called'))
     with pytest.raises(BrainError, match='local-only'):
         propose_summary(brain_root, 'sample', provider=True)
+
+
+def test_footnote_counts_facts_beyond_the_group_limit(brain_root):
+    page, _ = page_and_facts(brain_root, [('uses', f'工具{n}') for n in range(5)])
+    with closing(connect(brain_root / 'brain.db')) as conn:
+        text = evidence_summary(conn, page, 'zh')
+    assert text.count('使用工具') == 3
+    assert '另有 2 条事实未列入本地摘要' in text
+
+
+def test_chinese_labels_are_spaced_from_latin_values(brain_root):
+    page, _ = page_and_facts(brain_root, [('uses', 'SQLite'), ('frontend_framework', 'React')])
+    with closing(connect(brain_root / 'brain.db')) as conn:
+        text = evidence_summary(conn, page, 'zh')
+    assert '使用 SQLite' in text
+    assert '前端使用 React' in text
+
+
+def test_approved_summary_is_recorded_in_the_ledger(brain_root):
+    import json
+
+    from brain.pipeline.review import apply_pending
+
+    page_and_facts(brain_root, [('uses', 'SQLite')])
+    draft = brain_root / propose_summary(brain_root, 'sample')['review_file']
+    draft.write_text(draft.read_text(encoding='utf-8').replace('[ ] approve', '[x] approve'),
+                     encoding='utf-8')
+    assert apply_pending(brain_root).applied == 1
+    events = [json.loads(line) for line in
+              (brain_root / 'events.jsonl').read_text(encoding='utf-8').splitlines() if line.strip()]
+    decided = [e for e in events if e['kind'] == 'review_decided']
+    assert decided and decided[-1]['metadata']['kind'] == 'summary_refresh'
+    assert decided[-1]['metadata']['decision'] == 'approve'
