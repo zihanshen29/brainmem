@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import sqlite3
 import stat
+from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,13 +12,13 @@ import frontmatter
 
 import brain.git_ops as git_ops
 from brain.concurrency import coordinated
-from brain.config import load_config
+from brain.config import EmbeddingConfig, load_config
 from brain.db.connection import sqlite_uri
 from brain.exceptions import BrainError
 from brain.models import PageType
 from brain.pages import parse_page
 from brain.paths import BrainPaths
-from brain.pipeline.chunking import split_page_into_chunks
+from brain.pipeline.chunking import embedding_content_hash, split_page_into_chunks
 
 _FAILED_LAUNDRY_DIR_NAME = "failed"
 _PROCESSED_LAUNDRY_DIR_NAME = "processed"
@@ -89,6 +90,7 @@ class StatusReport:
             "active_import_jobs": self.active_import_jobs,
             "token_usage": dict(self.token_usage),
             "total_cost_usd": self.total_cost_usd,
+            "cost_scope": "recorded_embedding_only",
         }
 
 
@@ -99,7 +101,7 @@ def collect_status(brain_root: Path) -> StatusReport:
     _validate_brain_root(paths)
     config = load_config(paths.config_path)
 
-    with _connect_readonly(paths.db_path) as conn:
+    with closing(_connect_readonly(paths.db_path)) as conn:
         entities_by_tier = _entities_by_tier(conn)
         facts_active = _count(
             conn,
@@ -110,13 +112,13 @@ def collect_status(brain_root: Path) -> StatusReport:
             "SELECT COUNT(*) FROM facts WHERE superseded_by IS NOT NULL OR valid_to IS NOT NULL",
         )
         last_ingest_at = _last_ingest_at(conn)
-        indexed_chunks = _embedding_index_count(conn)
+        indexed_chunks = _embedding_index_hashes(conn)
         last_reindex_at = _last_reindex_at(conn)
         active_import_jobs = _active_import_jobs(conn)
         token_usage = _token_usage(conn)
         total_cost_usd = _stat_float(conn, "total_cost_usd", default=0.0)
 
-    total_chunks = _page_chunk_count(paths, config.embedding.chunk_max_chars)
+    expected_chunks = _page_chunk_hashes(paths, config.embedding)
 
     pending_reviews_by_kind = _pending_reviews_by_kind(paths.review_dir)
 
@@ -136,7 +138,7 @@ def collect_status(brain_root: Path) -> StatusReport:
         },
         last_ingest_at=last_ingest_at,
         git_dirty=git_ops.is_dirty(paths.root),
-        embedding_coverage=_embedding_coverage(total_chunks, indexed_chunks),
+        embedding_coverage=_embedding_coverage(expected_chunks, indexed_chunks),
         last_reindex_at=last_reindex_at,
         active_import_jobs=active_import_jobs,
         token_usage=token_usage,
@@ -181,21 +183,29 @@ def _iter_page_paths(paths: BrainPaths) -> list[Path]:
     )
 
 
-def _page_chunk_count(paths: BrainPaths, max_chars: int) -> int:
-    total = 0
+def _page_chunk_hashes(paths: BrainPaths, config: EmbeddingConfig) -> dict[tuple[str, str, str], str]:
+    chunks = {}
     for path in _iter_page_paths(paths):
-        total += len(split_page_into_chunks(parse_page(path), max_chars))
-    return total
+        for chunk in split_page_into_chunks(parse_page(path), config.chunk_max_chars):
+            chunks[(chunk.page_slug, chunk.chunk_kind, chunk.chunk_id)] = embedding_content_hash(
+                chunk.text, model=config.model, dimension=config.dimension
+            )
+    return chunks
 
 
-def _embedding_coverage(total_chunks: int, indexed_chunks: int) -> dict[str, int | float]:
-    covered_chunks = min(indexed_chunks, total_chunks)
-    ratio = 1.0 if total_chunks == 0 else covered_chunks / total_chunks
+def _embedding_coverage(
+    expected: dict[tuple[str, str, str], str], indexed: dict[tuple[str, str, str], str],
+) -> dict[str, int | float]:
+    current = sum(indexed.get(key) == content_hash for key, content_hash in expected.items())
+    missing = len(expected.keys() - indexed.keys())
     return {
-        "total_chunks": total_chunks,
-        "indexed_chunks": indexed_chunks,
-        "missing_chunks": max(total_chunks - indexed_chunks, 0),
-        "ratio": round(ratio, 6),
+        "total_chunks": len(expected),
+        "indexed_chunks": len(indexed),
+        "current_chunks": current,
+        "stale_chunks": len(expected) - current - missing,
+        "missing_chunks": missing,
+        "orphaned_chunks": len(indexed.keys() - expected.keys()),
+        "ratio": round(current / len(expected), 6) if expected else 1.0,
     }
 
 
@@ -235,13 +245,16 @@ def _last_reindex_at(conn: sqlite3.Connection) -> str | None:
     return value
 
 
-def _embedding_index_count(conn: sqlite3.Connection) -> int:
+def _embedding_index_hashes(conn: sqlite3.Connection) -> dict[tuple[str, str, str], str]:
     if not _table_exists(conn, "embedding_index"):
-        return 0
+        return {}
     try:
-        return int(conn.execute("SELECT COUNT(*) FROM embedding_index").fetchone()[0])
+        return {
+            (row["page_slug"], row["chunk_kind"], row["chunk_id"]): row["content_hash"]
+            for row in conn.execute("SELECT page_slug, chunk_kind, chunk_id, content_hash FROM embedding_index")
+        }
     except sqlite3.Error:
-        return 0
+        return {}
 
 
 def _active_import_jobs(conn: sqlite3.Connection) -> int:

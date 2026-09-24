@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import re
 import sqlite3
 from collections.abc import Iterable
@@ -23,6 +22,7 @@ from brain.llm.embedding import OpenAICompatibleEmbeddingClient
 from brain.models import EmbeddingChunk, EmbeddingRecord, Event, EventKind
 from brain.pages import parse_page
 from brain.paths import BrainPaths
+from brain.pipeline.chunking import embedding_content_hash as _content_hash
 from brain.pipeline.chunking import split_page_into_chunks
 
 _EMBEDDING_SCHEMA_DIMENSION_RE = re.compile(r"\bembedding\s+float\[(\d+)\]", re.IGNORECASE)
@@ -184,11 +184,6 @@ def _missing_page_orphans(conn, current_page_slugs: set[str], filters: set[str] 
 def _indexed_page_slugs(conn) -> set[str]:
     rows = conn.execute("SELECT DISTINCT page_slug FROM embedding_index").fetchall()
     return {row["page_slug"] for row in rows}
-
-
-def _content_hash(text: str, *, model: str, dimension: int) -> str:
-    payload = f"{text}{model}{dimension}"
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _validate_embedding_schema_dimension(conn: sqlite3.Connection, config_dimension: int) -> None:

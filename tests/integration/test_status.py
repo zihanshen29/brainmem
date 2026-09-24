@@ -44,7 +44,7 @@ def test_status_human_output_contains_minimum_fields(
         "Last reindex:",
         "Active import jobs:",
         "Token usage:",
-        "Total cost:",
+        "Recorded embedding cost:",
     ]:
         assert field in result.stdout
     assert "Git dirty: true" in result.stdout
@@ -82,6 +82,7 @@ def test_status_json_outputs_stable_count_keys(
         "active_import_jobs",
         "token_usage",
         "total_cost_usd",
+        "cost_scope",
     }
     assert payload["brain_root"] == str(brain_root.resolve())
     expected_pages_by_type = {
@@ -112,7 +113,10 @@ def test_status_json_outputs_stable_count_keys(
         "total_chunks": 8 if hasattr(PageType, "PROCEDURE") else 6,
         "indexed_chunks": 2,
         "missing_chunks": 6 if hasattr(PageType, "PROCEDURE") else 4,
-        "ratio": 0.25 if hasattr(PageType, "PROCEDURE") else 0.333333,
+        "current_chunks": 0,
+        "stale_chunks": 2,
+        "orphaned_chunks": 0,
+        "ratio": 0.0,
     }
     assert payload["last_reindex_at"] == "2026-04-27T11:00:00+00:00"
     assert payload["active_import_jobs"] == 2

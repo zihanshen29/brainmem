@@ -61,7 +61,7 @@ def _human_summary(report: StatusReport) -> str:
             f"Last reindex: {report.last_reindex_at or 'never'}",
             f"Active import jobs: {report.active_import_jobs}",
             f"Token usage: {_format_counts(report.token_usage)}",
-            f"Total cost: ${report.total_cost_usd:.6f}",
+            f"Recorded embedding cost: ${report.total_cost_usd:.6f} (LLM usage not tracked)",
         ]
     )
 
@@ -72,9 +72,14 @@ def _format_counts(counts: dict[str, int]) -> str:
 
 def _format_embedding_coverage(coverage: dict[str, int | float]) -> str:
     total = int(coverage.get("total_chunks", 0))
-    indexed = int(coverage.get("indexed_chunks", 0))
+    current = int(coverage.get("current_chunks", 0))
     ratio = float(coverage.get("ratio", 0.0))
-    return f"{indexed}/{total} ({ratio:.1%})"
+    return (
+        f"{current}/{total} current ({ratio:.1%}); "
+        f"stale={int(coverage.get('stale_chunks', 0))}, "
+        f"missing={int(coverage.get('missing_chunks', 0))}, "
+        f"orphaned={int(coverage.get('orphaned_chunks', 0))}"
+    )
 
 
 def _format_file_health(label: str, health: FileHealth) -> str:

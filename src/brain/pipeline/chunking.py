@@ -1,3 +1,5 @@
+import hashlib
+
 from brain.exceptions import BrainError
 from brain.models.embedding import EmbeddingChunk
 from brain.models.page import Page
@@ -5,6 +7,11 @@ from brain.pages.timeline import parse_entry
 
 STUB_COMPILED_TRUTH = "(stub - waiting for more evidence)"
 TEXT_PREVIEW_MAX_CHARS = 200
+
+
+def embedding_content_hash(text: str, *, model: str, dimension: int) -> str:
+    """Fingerprint chunk content and the embedding configuration without provider access."""
+    return hashlib.sha256(f"{text}{model}{dimension}".encode()).hexdigest()
 
 
 def split_page_into_chunks(page: Page, max_chars: int) -> list[EmbeddingChunk]:

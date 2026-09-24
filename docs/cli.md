@@ -65,7 +65,7 @@ mem inject --query "<query>" [--budget N] [--format markdown|text]
 
 - `--budget N` — 输出 token 预算，默认 10000。
 - `--format markdown|text` — 输出格式，默认 markdown。
-- `--snapshot/--no-snapshot` — 是否先注入 `scratch/SNAPSHOT.md`，默认开启。
+- `--snapshot/--no-snapshot` — 是否注入 `scratch/SNAPSHOT.md`，默认开启；关闭时也排除检索命中的 snapshot，同一快照最多注入一次。
 
 `mem inject` 适合 agent 把检索结果继续交给另一个模型时使用；普通面向人的查询仍用 `mem ask`。
 
@@ -222,6 +222,12 @@ mem import --list-jobs                    # 列出所有 import job
 - `--abort <job-id>` — 把指定 job 标记 failed
 - `--list-jobs` — 列出最近 job
 
+New jobs persist an absolute source path, so resume works from another working
+directory. Resume verifies each source hash before extracting it. A changed
+source is reported as failed instead of being imported under its old hash.
+Legacy jobs that only stored a relative source path must be aborted and imported
+again from the original source; the command does not guess their original directory.
+
 ### 输出示例
 
 ```
@@ -317,12 +323,18 @@ Scratch snapshot:     missing
 Last ingest:          2026-04-30 22:14:33 (UTC)
 
 # === (P2) ===
-Embedding coverage:   87% (134/154 chunks indexed)
+Embedding coverage:   134/154 current (87.0%); stale=10, missing=10, orphaned=0
 Last reindex:         2026-04-30 14:23:11 (UTC)
 Active import jobs:   0
 Token usage:          extraction 1.12M (~$3.21), embedding 84K (~$0.002)
-Total cost:           $3.210000
+Recorded embedding cost: $3.210000 (LLM usage not tracked)
 ```
+
+Embedding coverage counts chunks whose content hash still matches the current
+page and embedding configuration. JSON includes `current_chunks`, `stale_chunks`,
+`missing_chunks`, and `orphaned_chunks`; `ratio` is the current fraction.
+The legacy JSON key `total_cost_usd` is retained with
+`cost_scope: recorded_embedding_only`; it does not include untracked LLM calls.
 
 Laundry 和 scratch 的健康信息只统计文件数量、是否存在和更新时间；status
 不会读取或输出这些文件的正文。Review 分类只读取有界的 frontmatter，正文不会进入

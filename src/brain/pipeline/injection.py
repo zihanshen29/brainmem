@@ -13,7 +13,7 @@ from brain.exceptions import BrainError
 from brain.models import Page, PageType
 from brain.pages import parse_page
 from brain.paths import BrainPaths
-from brain.pipeline.ask import AskMode, ask
+from brain.pipeline.ask import AskMode, _recent_timeline, ask
 from brain.pipeline.retrieval.keyword import tokenize
 
 OutputFormat = Literal["markdown", "text"]
@@ -112,7 +112,7 @@ def inject(
                 skipped=skipped,
                 rendered=rendered,
             )
-            emitted_slugs.add("snapshot")
+            emitted_slugs.add("scratch-snapshot")
 
     for page_path, page in _included_pages(paths, include_slugs or []):
         if page.frontmatter.slug in emitted_slugs:
@@ -138,6 +138,14 @@ def inject(
         if summary.slug in emitted_slugs:
             continue
         if summary.slug in {"scratch-snapshot", "scratch-working"}:
+            if summary.slug == "scratch-snapshot" and not include_snapshot:
+                continue
+            scratch_path = (
+                paths.snapshot_path if summary.slug == "scratch-snapshot" else paths.working_buffer
+            )
+            scratch_text = _read_snapshot(scratch_path)
+            if scratch_text is None:
+                continue
             _append_budgeted_fragment(
                 output_format,
                 query=normalized_query,
@@ -146,7 +154,7 @@ def inject(
                 title=summary.title,
                 relative_path=summary.relative_path,
                 page_type=str(getattr(summary.page_type, "value", summary.page_type)),
-                compiled_truth=summary.compiled_truth,
+                compiled_truth=scratch_text,
                 timeline=summary.recent_timeline,
                 sources=[summary.relative_path],
                 fragments=fragments,
@@ -624,7 +632,7 @@ def _render_fragment(
             compiled_truth.strip(),
         ]
         if timeline:
-            lines.extend(["", "Recent timeline:", *timeline[:3]])
+            lines.extend(["", "Recent timeline:", *_recent_timeline(timeline)])
         if sources:
             lines.extend(["", "Sources:", *[f"- {source}" for source in sources]])
         return "\n".join(lines).rstrip()
@@ -637,7 +645,7 @@ def _render_fragment(
         compiled_truth.strip(),
     ]
     if timeline:
-        lines.extend(["Recent timeline:", *timeline[:3]])
+        lines.extend(["Recent timeline:", *_recent_timeline(timeline)])
     if sources:
         lines.extend(["Sources:", *sources])
     return "\n".join(lines).rstrip()
