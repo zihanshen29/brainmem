@@ -11,13 +11,14 @@ from pathlib import Path
 
 from brain.backup import file_hash, require_current_backup
 from brain.concurrency import root_lock
+from brain.config import load_config
 from brain.db.connection import connect
 from brain.db.entities import add_alias, get_entity, lookup_by_alias, upsert_entity
 from brain.exceptions import BrainError
 from brain.models import Entity, EntityAliasSource, PageType
 from brain.pages import parse_page, regenerate_index, update_sources
 from brain.pipeline.rebuild import page_entity_type
-from brain.transactions import durable_unit
+from brain.transactions import atomic_text, durable_unit
 
 
 def _fingerprint(root: Path) -> str:
@@ -25,6 +26,7 @@ def _fingerprint(root: Path) -> str:
         root / "brain.db",
         root / "brain.db-wal",
         root / "config.toml",
+        root / ".gitignore",
         root / "events.jsonl",
     ]
     for name in ("pages", "review", "laundry"):
@@ -42,9 +44,21 @@ def plan_reconcile(root: Path) -> dict:
         return _plan(root, conn)
 
 
+def _ignore_plan(root: Path) -> dict:
+    path = root / ".gitignore"
+    before = path.read_text(encoding="utf-8") if path.is_file() else ""
+    existing = {line.strip().lstrip("/") for line in before.splitlines()}
+    additions = [pattern for pattern in ("/.brainmem/", "/scratch/")
+                 if pattern.lstrip("/") not in existing]
+    after = before
+    if additions:
+        after = before.rstrip("\n") + "\n\n# BrainMem local runtime files\n" + "\n".join(additions) + "\n"
+    return {"before": before, "after": after, "additions": additions}
+
+
 def _plan(root: Path, conn) -> dict:
     plan: dict = {
-        "version": 1,
+        "version": 2,
         "fingerprint": _fingerprint(root),
         "registry": [],
         "sources": [],
@@ -58,6 +72,7 @@ def _plan(root: Path, conn) -> dict:
         "cleanup_candidates": [],
         "aliases": [],
         "errors": [],
+        "gitignore": _ignore_plan(root),
     }
     entities = {row["id"]: dict(row) for row in conn.execute("SELECT * FROM entities")}
     from brain.pipeline.resolve import normalize_name
@@ -185,62 +200,83 @@ def _plan(root: Path, conn) -> dict:
         "aliases_added": len(plan["aliases"]),
         "source_repairs": sum(bool(x["new"]) for x in plan["sources"]),
         "source_ambiguous": sum(not x["new"] for x in plan["sources"]),
+        "ignore_rules_added": len(plan["gitignore"]["additions"]),
     }
     return plan
 
 
 def apply_reconcile(root: Path, plan: dict, backup: Path) -> dict:
+    from brain.git_ops import check_commit_paths, commit
+
+    sha = None
     with root_lock(root, write=True):
         require_current_backup(root, backup)
-        with closing(connect(root / "brain.db")) as conn:
+        config = load_config(root / "config.toml")
+        commit_paths = [root / "brain.db", root / "pages/index.md", root / ".gitignore"]
+        commit_paths.extend(root / change["page"] for change in plan.get("sources", []) if change.get("new"))
+        commit_paths = list(dict.fromkeys(commit_paths))
+        if config.git.auto_commit:
+            check_commit_paths(root, commit_paths)
+        with closing(connect(root / "brain.db", read_only=True)) as conn:
             current = _plan(root, conn)
             if plan != current:
                 raise BrainError("Plan is stale or was modified; create and review a fresh dry-run")
             if plan["errors"] or plan["alias_conflicts"]:
                 raise BrainError("Resolve page or alias ambiguities before applying reconciliation")
-            with durable_unit(root, conn, "reconcile:" + plan["fingerprint"]):
-                for change in plan["registry"]:
-                    desired = change["after"]
-                    page = parse_page(root / desired["page_path"])
-                    existing = get_entity(conn, desired["id"])
-                    if existing:
-                        entity = existing.model_copy(
-                            update={
-                                "type": page_entity_type(page, existing),
-                                "title": desired["title"],
-                                "page_path": desired["page_path"],
-                            }
-                        )
-                    else:
-                        entity = Entity(
-                            **desired,
-                            first_seen=page.frontmatter.created,
-                            last_seen=page.frontmatter.updated,
-                        )
-                    upsert_entity(conn, entity)
-                for alias in plan["aliases"]:
-                    add_alias(
-                        conn, alias["alias"], alias["entity_id"], EntityAliasSource.FRONTMATTER
+        changed = bool(plan["registry"] or plan["aliases"] or plan["counts"]["source_repairs"] or plan["gitignore"]["additions"])
+        if not changed:
+            return {"applied": True, "registry": 0, "sources": 0, "ignore_rules_added": 0, "commit": None}
+        before_hashes = {p: file_hash(p) if p.is_file() else None for p in commit_paths}
+        with closing(connect(root / "brain.db")) as conn, durable_unit(root, conn, "reconcile:" + plan["fingerprint"]):
+            for change in plan["registry"]:
+                desired = change["after"]
+                page = parse_page(root / desired["page_path"])
+                existing = get_entity(conn, desired["id"])
+                if existing:
+                    entity = existing.model_copy(
+                        update={
+                            "type": page_entity_type(page, existing),
+                            "title": desired["title"],
+                            "page_path": desired["page_path"],
+                        }
                     )
-                for change in plan["sources"]:
-                    if not change["new"]:
-                        continue
-                    path = root / change["page"]
-                    page = parse_page(path)
-                    update_sources(
-                        path,
-                        [
-                            change["new"] if value == change["old"] else value
-                            for value in page.sources
-                        ],
+                else:
+                    entity = Entity(
+                        **desired,
+                        first_seen=page.frontmatter.created,
+                        last_seen=page.frontmatter.updated,
                     )
-                    conn.execute(
-                        "UPDATE facts SET source_ref = ? WHERE source_ref = ?",
-                        (change["new"], change["old"]),
-                    )
-                regenerate_index(root)
+                upsert_entity(conn, entity)
+            for alias in plan["aliases"]:
+                add_alias(
+                    conn, alias["alias"], alias["entity_id"], EntityAliasSource.FRONTMATTER
+                )
+            for change in plan["sources"]:
+                if not change["new"]:
+                    continue
+                path = root / change["page"]
+                page = parse_page(path)
+                update_sources(
+                    path,
+                    [
+                        change["new"] if value == change["old"] else value
+                        for value in page.sources
+                    ],
+                )
+                conn.execute(
+                    "UPDATE facts SET source_ref = ? WHERE source_ref = ?",
+                    (change["new"], change["old"]),
+                )
+            regenerate_index(root)
+            if plan["gitignore"]["additions"]:
+                atomic_text(root / ".gitignore", plan["gitignore"]["after"])
+        if config.git.auto_commit:
+            changed_paths = [p for p in commit_paths if p.is_file() and file_hash(p) != before_hashes[p]]
+            sha = commit(root, "reconcile: repair registry, sources and runtime ignore rules", paths=changed_paths)
     return {
         "applied": True,
         "registry": len(plan["registry"]),
         "sources": plan["counts"]["source_repairs"],
+        "ignore_rules_added": len(plan["gitignore"]["additions"]),
+        "commit": sha,
     }

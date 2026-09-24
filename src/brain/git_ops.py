@@ -27,11 +27,7 @@ def commit(root: Path, message: str, paths: list[Path] | None = None) -> str | N
             paths = [p for p in paths if track_db or _repo_relative_path(root, p) != "brain.db"]
             if not paths:
                 return None
-            staged = set(repo.git.diff("--cached", "--name-only").splitlines())
-            permitted = [_repo_relative_path(root, p) for p in paths]
-            if any(not any(name == p or name.startswith(p.rstrip("/") + "/") for p in permitted)
-                   for name in staged):
-                raise GitError("Unrelated staged changes exist; finish that commit before automatic commit")
+            check_commit_paths(root, paths)
         if paths is None:
             if not track_db and "brain.db" in repo.git.diff("--cached", "--name-only").splitlines():
                 raise GitError("brain.db is staged but database tracking is disabled")
@@ -47,6 +43,21 @@ def commit(root: Path, message: str, paths: list[Path] | None = None) -> str | N
         return repo.head.commit.hexsha[:7]
     except GitPythonError as exc:
         raise GitError(f"Could not commit changes in {root}") from exc
+
+
+def check_commit_paths(root: Path, paths: list[Path]) -> None:
+    """Check staging before a data operation so automatic commit cannot absorb other work."""
+    from brain.config import load_config
+
+    config_path = root / "config.toml"
+    track_db = load_config(config_path).git.track_database if config_path.exists() else False
+    permitted = [_repo_relative_path(root, p) for p in paths]
+    if not track_db:
+        permitted = [p for p in permitted if p != "brain.db"]
+    staged = _open_repo(root).git.diff("--cached", "--name-only").splitlines()
+    if any(not any(name == p or name.startswith(p.rstrip("/") + "/") for p in permitted)
+           for name in staged):
+        raise GitError("Unrelated staged changes exist; finish that commit before automatic commit")
 
 
 def _open_repo(root: Path) -> Repo:
