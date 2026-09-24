@@ -444,7 +444,7 @@ def test_apply_tier_proposal_updates_entity_and_rewrites_page(
         calls.append((len(timeline), current_truth))
         return "rewritten truth"
 
-    monkeypatch.setattr(review_pipeline.llm_client, "rewrite_compiled_truth", fake_rewrite)
+    monkeypatch.setattr(importlib.import_module("brain.llm.client"), "rewrite_compiled_truth", fake_rewrite)
 
     report = apply_pending(brain_root)
 
@@ -454,8 +454,8 @@ def test_apply_tier_proposal_updates_entity_and_rewrites_page(
     assert report.applied == 1
     assert entity["tier"] == 2
     assert proposal["decision"] == "approved"
-    assert calls == [(1, "old truth")]
-    assert page.compiled_truth == "rewritten truth"
+    assert calls == []
+    assert page.compiled_truth == "old truth"
     assert page.frontmatter.tier is Tier.TIER_2
 
 
@@ -481,12 +481,13 @@ def test_reject_and_defer_archive_without_fact_write(brain_root: Path) -> None:
     assert report.applied == 1
     assert report.skipped == 1
     assert report.deferred == 1
-    assert report.archived == 2
+    assert report.archived == 1
     assert _scalar(brain_root, "SELECT COUNT(*) FROM facts") == 0
     assert (brain_root / "review" / "archive" / "2026-04-28_001_low_confidence_fact.md").exists()
-    deferred = brain_root / "review" / "archive" / "2026-04-28_002_low_confidence_fact.md"
+    deferred = brain_root / "review" / "2026-04-28_002_low_confidence_fact.md"
     assert deferred.exists()
-    assert "status: deferred" in deferred.read_text(encoding="utf-8")
+    assert "status: pending" in deferred.read_text(encoding="utf-8")
+    assert "[x] defer" not in deferred.read_text(encoding="utf-8")
 
 
 @requires_review_pipeline
@@ -550,6 +551,7 @@ def test_cli_review_lists_pending_items_and_filters_kind(
 
     monkeypatch.setattr(review_cli, "list_pending", fake_list_pending)
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BRAIN_ROOT", str(tmp_path))
 
     all_result = runner.invoke(app, ["review"])
     filtered_result = runner.invoke(app, ["review", "--kind", "fact_conflict"])
@@ -610,6 +612,7 @@ def test_cli_review_apply_scans_pending_and_passes_kind_filter(
 
     monkeypatch.setattr(review_cli, "apply_pending", fake_apply_pending)
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BRAIN_ROOT", str(tmp_path))
 
     result = runner.invoke(app, ["review", "--apply", "--kind", "fact_conflict"])
 

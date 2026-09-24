@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -30,6 +31,16 @@ def check_tier_upgrade(
     """Return a tier upgrade proposal without writing review or DB rows."""
     entity = get_entity(conn, entity_id)
     if entity is None:
+        return None
+    if entity.metadata.get("tier_pinned"):
+        return None
+    rejected_count = entity.metadata.get("tier_rejected_at_count")
+    if rejected_count is None:
+        row = conn.execute("SELECT reason FROM tier_proposals WHERE entity_id = ? AND decision = 'rejected' ORDER BY id DESC LIMIT 1", (entity_id,)).fetchone()
+        match = re.search(r"mention_count (\d+)", row[0]) if row else None
+        if match:
+            rejected_count = int(match[1])
+    if isinstance(rejected_count, int) and entity.mention_count < rejected_count + max(10, (rejected_count + 1) // 2):
         return None
 
     resolved_config = resolve_pipeline_config(config)

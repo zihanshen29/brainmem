@@ -151,8 +151,8 @@ def test_classify_fact_llm_supersede_decision(conn: sqlite3.Connection, monkeypa
 
     decision = classify_fact(conn, sample_candidate("Singapore", confidence=0.95), make_config())
 
-    assert decision is Decision.SUPERSEDE
-    assert len(calls) == 1
+    assert decision is Decision.CONFLICT
+    assert not calls
 
 
 def test_classify_fact_adds_when_llm_says_no_conflict(
@@ -174,7 +174,7 @@ def test_classify_fact_adds_when_llm_says_no_conflict(
 
     decision = classify_fact(conn, sample_candidate("Singapore", confidence=0.95), make_config())
 
-    assert decision is Decision.ADD
+    assert decision is Decision.CONFLICT
 
 
 def test_classify_fact_does_not_write_db(conn: sqlite3.Connection, monkeypatch) -> None:
@@ -194,7 +194,7 @@ def test_classify_fact_does_not_write_db(conn: sqlite3.Connection, monkeypatch) 
     decision = classify_fact(conn, sample_candidate("Singapore", confidence=0.95), make_config())
     row = conn.execute("SELECT superseded_by FROM facts WHERE id = ?", (fact_id,)).fetchone()
 
-    assert decision is Decision.SUPERSEDE
+    assert decision is Decision.CONFLICT
     assert row_count(conn, "facts") == 1
     assert row["superseded_by"] is None
 

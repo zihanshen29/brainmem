@@ -11,8 +11,9 @@ from pathlib import Path
 import ulid
 
 from brain import git_ops
-from brain.concurrency import coordinated
+from brain.concurrency import operation_lock, root_lock
 from brain.config import load_config
+from brain.config_context import configured_path
 from brain.db.connection import connect
 from brain.db.embeddings import delete_embedding, find_embeddings_for_page, upsert_embedding
 from brain.db.stats import increment_stat, set_stat
@@ -24,6 +25,7 @@ from brain.pages import parse_page
 from brain.paths import BrainPaths
 from brain.pipeline.chunking import embedding_content_hash as _content_hash
 from brain.pipeline.chunking import split_page_into_chunks
+from brain.privacy import external_allowed
 
 _EMBEDDING_SCHEMA_DIMENSION_RE = re.compile(r"\bembedding\s+float\[(\d+)\]", re.IGNORECASE)
 
@@ -41,6 +43,7 @@ class ReindexReport:
     dry_run: bool = False
     committed: bool = False
     errors: list[str] = field(default_factory=list)
+    pages_private: int = 0
 
     @property
     def would_embed(self) -> int:
@@ -55,7 +58,6 @@ class _PendingChunk:
     action: str
 
 
-@coordinated(write=True)
 def reindex(
     brain_root: Path,
     force: bool = False,
@@ -64,12 +66,20 @@ def reindex(
     no_commit: bool = True,
 ) -> ReindexReport:
     """Incrementally embed page chunks into the vector index."""
+    with operation_lock(Path(brain_root), "reindex"), configured_path(Path(brain_root) / "config.toml"):
+        return _reindex(brain_root, force, page_filter, dry_run, no_commit)
+
+
+def _reindex(brain_root: Path, force: bool, page_filter: str | Iterable[str] | None,
+             dry_run: bool, no_commit: bool) -> ReindexReport:
     paths = BrainPaths(brain_root)
     config = load_config(paths.config_path)
     report = ReindexReport(dry_run=dry_run)
     filters = _normalize_page_filter(page_filter)
 
-    with closing(connect(paths.db_path)) as conn, conn:
+    import hashlib
+    snapshots = {}
+    with root_lock(paths.root), closing(connect(paths.db_path, read_only=True)) as conn:
         pending: list[_PendingChunk] = []
         orphans: list[EmbeddingRecord] = []
         current_page_slugs: set[str] = set()
@@ -82,7 +92,11 @@ def reindex(
                 continue
 
             report.pages_scanned += 1
-            chunks = split_page_into_chunks(page, config.embedding.chunk_max_chars)
+            snapshots[page_path] = hashlib.sha256(page_path.read_bytes()).hexdigest()
+            allowed = external_allowed(paths.root, path=page_path)
+            if not allowed:
+                report.pages_private += 1
+            chunks = split_page_into_chunks(page, config.embedding.chunk_max_chars) if allowed else []
             existing = find_embeddings_for_page(conn, slug)
             existing_by_key = {
                 (record.chunk_kind, record.chunk_id): record for record in existing
@@ -123,33 +137,57 @@ def reindex(
 
         if pending:
             _validate_embedding_schema_dimension(conn, config.embedding.dimension)
-            client = OpenAICompatibleEmbeddingClient(config.embedding)
-            _embed_pending(
-                conn,
-                pending,
-                client,
-                config.embedding.model,
-                config.embedding.batch_size,
-                report,
-            )
-
+        config_bytes = paths.config_path.read_bytes()
+    # Provider work has no live write transaction or data-root lock.
+    collected = []
+    if pending:
+        client = OpenAICompatibleEmbeddingClient(config.embedding)
+        for start in range(0, len(pending), config.embedding.batch_size):
+            batch = pending[start:start + config.embedding.batch_size]
+            try:
+                vectors = client.embed([item.chunk.text for item in batch])
+                collected.extend(list(zip(batch, vectors, strict=True)))
+                report.tokens_used += client.last_call_tokens
+            except Exception as exc:
+                report.errors.append(f"Batch {start // config.embedding.batch_size + 1} failed: {type(exc).__name__}")
+                for item in batch:
+                    try:
+                        vectors = client.embed([item.chunk.text])
+                        collected.append((item, vectors[0]))
+                        report.tokens_used += client.last_call_tokens
+                    except Exception as individual_exc:
+                        report.errors.append(f"{item.chunk.page_slug}: {type(individual_exc).__name__}")
+    with root_lock(paths.root, write=True), closing(connect(paths.db_path)) as conn:
+        if config_bytes != paths.config_path.read_bytes() or any(
+            not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest
+            for path, digest in snapshots.items()
+        ):
+            raise EmbeddingError("Pages or configuration changed during embedding; rerun reindex")
+        for item, vector in collected:
+            path = next(path for path in snapshots if parse_page(path).frontmatter.slug == item.chunk.page_slug)
+            if not external_allowed(paths.root, path=path):
+                report.errors.append(f"{item.chunk.page_slug}: now local-only; embedding discarded")
+                continue
+            _upsert_successful(conn, [item], [vector], config.embedding.model, report)
         with conn:
             for orphan in orphans:
                 delete_embedding(conn, orphan.rowid)
             report.chunks_removed = len(orphans)
 
-        _write_event(paths, report, config.embedding.model)
-        _update_stats(conn, report.tokens_used, config.embedding.unit_cost_per_1m_tokens)
+        if report.chunks_added or report.chunks_updated or report.chunks_removed:
+            _write_event(paths, report, config.embedding.model)
+            _update_stats(conn, report.tokens_used, config.embedding.unit_cost_per_1m_tokens)
 
-    if not no_commit:
-        report.committed = (
-            git_ops.commit(
-                paths.root,
-                "reindex: update embedding index",
-                paths=[paths.db_path, paths.events_jsonl],
+    with root_lock(paths.root, write=True):
+        if not no_commit:
+            report.committed = (
+                git_ops.commit(
+                    paths.root,
+                    "reindex: update embedding index",
+                    paths=[paths.db_path, paths.events_jsonl],
+                )
+                is not None
             )
-            is not None
-        )
 
     return report
 

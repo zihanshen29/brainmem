@@ -46,7 +46,7 @@ def test_keyword_query_finds_expected_page_in_top_three(brain_root: Path) -> Non
 
     assert [page.slug for page in result.results][:1] == ["cv-coursework"]
     assert result.effective_mode == "keyword-only"
-    assert result.warnings
+    assert result.warnings == []
     assert result.results[0].page_type is PageType.PROJECT
     assert result.results[0].compiled_truth.startswith("Computer vision coursework")
 
@@ -134,7 +134,7 @@ def test_hybrid_uses_vector_hits_when_embeddings_are_available(
     monkeypatch.setattr(embedding_module, "OpenAICompatibleEmbeddingClient", FakeEmbeddingClient)
     monkeypatch.setattr(ask_pipeline, "_vector_path_available", lambda conn: True)
 
-    result = ask(brain_root, "semantic-only query", top=2, debug=True)
+    result = ask(brain_root, "semantic-only query", top=2, debug=True, mode="hybrid")
 
     assert result.effective_mode == "hybrid"
     assert result.results[0].slug == "zhang-san"
@@ -193,7 +193,7 @@ def test_sql_mode_uses_entity_match(brain_root: Path) -> None:
 
 
 def test_default_hybrid_structured_query_uses_sql_direct_shortcut(brain_root: Path) -> None:
-    result = ask(brain_root, "list Zhang San 2026", debug=True)
+    result = ask(brain_root, "list Zhang San 2026", debug=True, mode="hybrid")
 
     assert result.mode == "hybrid"
     assert result.effective_mode == "sql"

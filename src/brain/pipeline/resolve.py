@@ -1,5 +1,7 @@
+import hashlib
 import re
 import sqlite3
+import unicodedata
 from datetime import UTC, datetime
 
 from brain.db.entities import get_entity, lookup_by_alias, upsert_entity
@@ -29,7 +31,7 @@ def _touch_entity(conn: sqlite3.Connection, entity_id: str) -> Entity | None:
 
 def _slug_from_name(name: str) -> str | None:
     if not name.isascii():
-        return None
+        return "entity-" + hashlib.sha256(normalize_name(name).encode()).hexdigest()[:12]
 
     slug = _NON_ALNUM_PATTERN.sub("-", name.lower())
     slug = _DASH_PATTERN.sub("-", slug).strip("-")
@@ -47,15 +49,37 @@ def _page_path_for_entity(entity_id: str, entity_type: EntityType | None) -> str
 
 
 def _entity_type_for_hint(hint_type: EntityType | None) -> EntityType:
-    return hint_type or EntityType.PERSON
+    return hint_type or EntityType.UNKNOWN
+
+
+def normalize_name(name: str) -> str:
+    return " ".join(unicodedata.normalize("NFKC", name).casefold().split())
+
+
+def matching_entity_ids(conn: sqlite3.Connection, name: str) -> list[str]:
+    key = normalize_name(name)
+    rows = conn.execute(
+        "SELECT id AS entity_id, id AS name FROM entities UNION ALL "
+        "SELECT id, title FROM entities UNION ALL SELECT entity_id, alias FROM entity_aliases"
+    )
+    return sorted({row["entity_id"] for row in rows if normalize_name(row["name"]) == key})
 
 
 def resolve_entity(
     conn: sqlite3.Connection,
     name: str,
     hint_type: EntityType | None,
+    *,
+    confidence: float = 1.0,
+    allow_create: bool = True,
+    auto_accept: float = 0.85,
 ) -> Entity | None:
-    """Resolve an entity by exact alias/title, or create a new ASCII-slug entity."""
+    """Use unique matches first; new typed entities have the same gate in every language."""
+    matches = matching_entity_ids(conn, name)
+    if len(matches) == 1:
+        return _touch_entity(conn, matches[0])
+    if len(matches) > 1:
+        return None
     alias_entity_id = lookup_by_alias(conn, name)
     if alias_entity_id is not None:
         return _touch_entity(conn, alias_entity_id)
@@ -78,6 +102,9 @@ def resolve_entity(
     compact_match = _lookup_by_compact_slug(conn, slug)
     if compact_match is not None:
         return _touch_entity(conn, compact_match)
+
+    if not allow_create or hint_type in {None, EntityType.UNKNOWN} or confidence < auto_accept:
+        return None
 
     now = _now_utc()
     entity_type = _entity_type_for_hint(hint_type)

@@ -89,7 +89,47 @@ def _build_signal_input(text: str, hint: dict[str, Any] | None) -> str:
 
 def detect_signal(text: str, hint: dict[str, Any] | None = None) -> SignalExtraction:
     """Extract candidate entities and facts from text through the LLM client."""
-    from brain.llm.client import extract_signal
+    from pathlib import Path
 
-    raw = extract_signal(_build_signal_input(text, hint))
-    return SignalExtraction.model_validate(raw)
+    from brain.config import load_config
+    from brain.config_context import get_config_path
+    from brain.llm.client import TruncatedResponseError, extract_signal
+
+    path = get_config_path()
+    limit = load_config(Path(path)).ingest.chunk_max_chars if path else 4000
+
+    def extract(part: str) -> list[SignalExtraction]:
+        if len(part) > limit:
+            split = part.rfind("\n", 0, limit) if "\n" in part[:limit] else limit
+            split = split if split > limit // 2 else limit
+            return extract(part[:split]) + extract(part[split:])
+        try:
+            return [SignalExtraction.model_validate(extract_signal(_build_signal_input(part, hint)))]
+        except TruncatedResponseError:
+            if len(part) <= 256:
+                raise
+            middle = len(part) // 2
+            return extract(part[:middle]) + extract(part[middle:])
+
+    parts = extract(text)
+    from brain.pipeline.resolve import normalize_name
+    entities: dict[str, SignalEntity] = {}
+    facts: dict[tuple, FactCandidate] = {}
+    procedures: dict[str, ProcedureCandidate] = {}
+    for part in parts:
+        for entity in part.entities:
+            key = normalize_name(entity.name)
+            if key not in entities or entities[key].confidence < entity.confidence:
+                entities[key] = entity
+        for fact in part.facts:
+            fact_key = (fact.subject, fact.predicate, fact.object, fact.valid_from, fact.valid_to)
+            if fact_key not in facts or facts[fact_key].confidence < fact.confidence:
+                facts[fact_key] = fact
+        for procedure in part.procedure_candidates:
+            procedures.setdefault(procedure.suggested_slug, procedure)
+    return SignalExtraction(
+        entities=list(entities.values()), facts=list(facts.values()),
+        procedure_candidates=list(procedures.values()),
+        timeline_summary=" ".join(dict.fromkeys(part.timeline_summary for part in parts)),
+        suggested_page_type=next((p.suggested_page_type for p in parts if p.suggested_page_type), None),
+    )

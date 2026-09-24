@@ -71,7 +71,8 @@ def test_laundry_ingest_persists_fact_page_timeline_archive_and_cursor(
     assert page.frontmatter.slug == "alice"
     assert page.frontmatter.title == "Alice"
     assert any(laundry_events[0].id in entry for entry in page.timeline)
-    assert any("Alice started maintaining Brain." in entry for entry in page.timeline)
+    assert any("memory-system-maintainer" in entry for entry in page.timeline)
+    assert "memory-system-maintainer" in page.compiled_truth
 
     assert not laundry_path.exists()
     archived = list((brain_root / "laundry" / "processed").glob("*.md"))
@@ -224,7 +225,7 @@ def test_unresolved_entity_fact_becomes_pending_fact_review(
                 SignalEntity(
                     name="小张",
                     type=EntityType.PERSON,
-                    confidence=0.95,
+                    confidence=0.6,
                     metadata={},
                 ),
             ],
@@ -573,10 +574,10 @@ def test_transient_conflict_judgment_keeps_current_source_without_ingest_error(
 
     monkeypatch.setattr(llm_client, "judge_conflict", fail_conflict_judgment)
 
-    with pytest.raises(IngestError, match="temporary provider"):
-        _run_ingest(brain_root, source="laundry")
+    report = _run_ingest(brain_root, source="laundry")
+    assert report.review_items_created == 1
 
-    assert laundry_path.exists()
+    assert not laundry_path.exists()
     assert list((brain_root / "laundry" / "failed").glob("*.md")) == []
     ingest_error_reviews = [
         path

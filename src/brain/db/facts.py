@@ -78,6 +78,7 @@ def add_fact(conn: sqlite3.Connection, fact: Fact) -> int:
                 fact.superseded_by,
             ),
         )
+    assert cursor.lastrowid is not None
     return int(cursor.lastrowid if fact.id is None else fact.id)
 
 
@@ -87,14 +88,15 @@ def find_active_facts(conn: sqlite3.Connection, subject: str, predicate: str) ->
         """
         SELECT * FROM facts
         WHERE subject = ?
-          AND predicate = ?
           AND superseded_by IS NULL
           AND valid_to IS NULL
         ORDER BY id
         """,
-        (subject, predicate),
+        (subject,),
     ).fetchall()
-    return [_fact_from_row(row) for row in rows]
+    from brain.predicates import normalize_predicate
+    return [_fact_from_row(row) for row in rows
+            if normalize_predicate(row["predicate"]) == normalize_predicate(predicate)]
 
 
 def supersede(conn: sqlite3.Connection, old_fact_id: int, new_fact_id: int) -> None:

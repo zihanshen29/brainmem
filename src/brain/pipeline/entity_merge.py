@@ -14,7 +14,6 @@ from brain.config import load_config
 from brain.db.backlinks import replace_backlinks_for_page
 from brain.db.connection import connect
 from brain.exceptions import BrainError, ConfigError, DBError
-from brain.llm import client as llm_client
 from brain.models import EntityAliasSource, EntityType, Page, PageType, Tier
 from brain.pages import parse_page, regenerate_index, write_page
 from brain.pages.timeline import format_entry, parse_entry
@@ -85,10 +84,10 @@ def merge_entities(
         _validate_alias_transfers(conn, alias_transfers, canonical=canonical, loser=loser)
 
         merged_timeline = _merge_timeline(canonical_page.timeline, loser_page.timeline)
-        merged_truth = llm_client.rewrite_compiled_truth(
-            [parse_entry(line) for line in merged_timeline],
-            canonical_page.compiled_truth,
-        )
+        # Preserve both authors' text. Summary refresh is a separate reviewed operation.
+        merged_truth = canonical_page.compiled_truth
+        if loser_page.compiled_truth and loser_page.compiled_truth != merged_truth:
+            merged_truth += "\n\n" + loser_page.compiled_truth
 
         now = _now_utc()
         report = EntityMergeReport(
@@ -423,6 +422,7 @@ def _restore_files(snapshot: dict[Path, bytes | object]) -> None:
                 path.unlink()
             continue
         path.parent.mkdir(parents=True, exist_ok=True)
+        assert isinstance(content, bytes)
         path.write_bytes(content)
 
 

@@ -1,14 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import shutil
 import sqlite3
-import traceback
 from collections.abc import Iterator
-from contextlib import contextmanager
-from dataclasses import dataclass, field
+from contextlib import closing, contextmanager
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -18,14 +18,14 @@ from urllib.parse import urlsplit
 import ulid
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from brain.concurrency import coordinated
+from brain.concurrency import coordinated, operation_lock, root_lock
 from brain.config import Config, load_config
 from brain.db.backlinks import replace_backlinks_for_page
-from brain.db.connection import connect, sqlite_uri
+from brain.db.connection import connect, connect_readonly
 from brain.db.entities import get_entity
 from brain.db.facts import add_fact, find_active_facts, supersede
 from brain.db.tier import propose_tier
-from brain.exceptions import ConfigError, IngestError, LLMError
+from brain.exceptions import BrainError, ConfigError, IngestError, LLMError
 from brain.ledger import append_event, read_all
 from brain.models import (
     Entity,
@@ -61,6 +61,15 @@ from brain.pipeline.signal_detect import (
     detect_signal,
 )
 from brain.pipeline.tier import TierProposal, check_tier_upgrade
+from brain.predicates import fact_sentence, normalize_predicate
+from brain.privacy import external_allowed, split_provenance
+from brain.transactions import (
+    atomic_text,
+    completed,
+    durable_unit,
+    ensure_operation_table,
+    protect_path,
+)
 
 Source = Literal["laundry", "events", "all"]
 VALID_SOURCES = {"laundry", "events", "all"}
@@ -72,6 +81,7 @@ REVIEW_KINDS = {
     "procedure_candidate",
     "tier_proposal",
     "new_entity_review",
+    "summary_refresh",
 }
 REVIEW_DECISION_SECTION = """## Decision
 
@@ -118,6 +128,7 @@ class IngestReport(BaseModel):
     dry_run: bool = False
     review_files: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+    skipped_private: int = 0
 
 
 class RequeueReport(BaseModel):
@@ -144,6 +155,9 @@ class IngestItem:
     text: str
     event: Event
     laundry_path: Path | None = None
+    raw_hash: str = ""
+    hints: dict = field(default_factory=dict)
+    read_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -207,7 +221,6 @@ class ReviewWriter:
         return relative
 
 
-@coordinated(write=True)
 def ingest(
     brain_root: Path,
     source: str = "all",
@@ -226,89 +239,126 @@ def ingest(
         raise IngestError("event_id can only be used with events or all source")
 
     paths = BrainPaths(Path(brain_root))
-    config = load_config(paths.config_path)
     report = IngestReport(dry_run=dry_run)
-
     if dry_run:
-        return _run_dry_ingest(
-            paths,
-            source,
-            limit,
-            report,
-            event_id=event_id,
-        )
+        with root_lock(paths.root):
+            return _run_dry_ingest(paths, source, limit, report, event_id=event_id)
 
-    conn = _connect_for_ingest(paths.db_path, dry_run=dry_run)
-    try:
-        items = _collect_items(paths, conn, source, limit, event_id=event_id)
-        if items:
+    # Serialize ingesters, but release the data-root lock during provider work.
+    with operation_lock(paths.root, "ingest"), _configured_llm_path(paths.config_path):
+        with root_lock(paths.root), closing(connect(paths.db_path, read_only=True)) as conn:
+            config = load_config(paths.config_path)
+            config_hash = hashlib.sha256(paths.config_path.read_bytes()).hexdigest()
+            items = _collect_items(paths, conn, source, limit, event_id=event_id)
+            items = [_with_entity_hints(paths, conn, item, config) for item in items]
+            permitted = [item for item in items if item.read_error or external_allowed(
+                paths.root, path=item.laundry_path or item.event.raw_payload_path or item.source_ref,
+                text=item.text, metadata=item.event.metadata)]
+            report.skipped_private = len(items) - len(permitted)
+        if any(not item.read_error for item in permitted):
             _preflight_ingest_provider(config)
-
-        with _configured_llm_path(paths.config_path):
-            staged = _stage_extractions(items)
-
-        review_writer = ReviewWriter.create(paths, report)
-
+        staged = _stage_extractions(permitted, paths=paths, config_hash=config_hash)
         for staged_item in staged:
-            item = staged_item.item
-            if staged_item.error is not None:
-                _record_item_content_failure(
-                    paths,
-                    conn,
-                    item,
-                    staged_item.error,
-                    review_writer,
-                    report,
-                    advance_cursor=event_id is None,
-                )
-                continue
-
-            if staged_item.extraction is None:
-                raise IngestError(f"Staged extraction is missing for {item.source_ref}")
-
-            try:
-                with _configured_llm_path(paths.config_path), conn:
-                    result = _apply_extraction(
-                        conn=conn,
-                        paths=paths,
-                        config=config,
-                        item=item,
-                        extraction=staged_item.extraction,
-                        review_writer=review_writer,
-                        report=report,
-                    )
-
-                _record_item_success(
-                    paths, conn, item, result, report, advance_cursor=event_id is None
-                )
-            except Exception as exc:
-                failure_kind = _classify_ingest_failure(exc)
-                if failure_kind is not IngestFailureKind.CONTENT:
-                    raise _batch_ingest_error(item, exc, failure_kind) from exc
-                _record_item_content_failure(
-                    paths,
-                    conn,
-                    item,
-                    exc,
-                    review_writer,
-                    report,
-                    advance_cursor=event_id is None,
-                )
-
-        if event_id is None and source in {"all", "events"}:
-            _advance_skipped_events(paths, conn)
-        _finalize_run(
-            conn,
-            paths,
-            config,
-            report,
-            auto_commit=auto_commit,
-            auto_reindex=auto_reindex,
-        )
-    finally:
-        _close_ingest_connection(conn, paths.db_path)
-
+            with root_lock(paths.root, write=True), closing(connect(paths.db_path)) as conn:
+                ensure_operation_table(conn)
+                item = staged_item.item
+                key = _item_key(item)
+                if completed(conn, key) or (event_id is None and item.source == "events" and completed(conn, "failed:" + key)):
+                    continue
+                if hashlib.sha256(paths.config_path.read_bytes()).hexdigest() != config_hash:
+                    raise IngestError("Configuration changed during extraction; rerun with the new policy")
+                if item.laundry_path is not None:
+                    if not item.laundry_path.is_file():
+                        continue
+                    if hashlib.sha256(item.laundry_path.read_bytes()).hexdigest() != item.raw_hash:
+                        raise IngestError("Source changed during extraction; cached result was not applied")
+                    item = _with_archive_ref(paths, item, failed=staged_item.error is not None)
+                if item.source == "events" and _event_text(paths.root, item.event) != item.text:
+                    raise IngestError("Event source changed during extraction; cached result was not applied")
+                if not item.read_error and not external_allowed(paths.root, path=item.laundry_path or item.source_ref,
+                                        text=item.text, metadata=item.event.metadata):
+                    report.skipped_private += 1
+                    continue
+                writer = ReviewWriter.create(paths, report)
+                before = report.model_copy(deep=True)
+                try:
+                    unit_key = key if staged_item.error is None else "failed:" + key + ":" + str(ulid.ULID())
+                    with durable_unit(paths.root, conn, unit_key):
+                        if staged_item.error is not None:
+                            _record_item_content_failure(paths, conn, item, staged_item.error,
+                                                         writer, report, advance_cursor=False)
+                            if item.source == "events":
+                                conn.execute("INSERT OR IGNORE INTO operation_commits (id) VALUES (?)", ("failed:" + key,))
+                        else:
+                            assert staged_item.extraction is not None
+                            extraction = _normalize_extraction_sources(staged_item.extraction, item)
+                            result = _apply_extraction(conn=conn, paths=paths, config=config, item=item,
+                                                       extraction=extraction, review_writer=writer, report=report)
+                            _record_item_success(paths, conn, item, result, report, advance_cursor=False)
+                            _rebuild_touched_backlinks(conn, paths, report.pages_touched)
+                            regenerate_index(paths.root)
+                except Exception as exc:
+                    report = before
+                    raise _batch_ingest_error(item, exc, _classify_ingest_failure(exc)) from exc
+        with root_lock(paths.root, write=True), closing(connect(paths.db_path)) as conn:
+            # A skipped local-only event must not be passed by the global cursor.
+            if event_id is None and source in {"all", "events"}:
+                _advance_completed_events(paths, conn)
+            if report.processed or report.review_items_created:
+                _finalize_run(conn, paths, config, report, auto_commit=auto_commit, auto_reindex=False)
+        should_reindex = config.import_.auto_reindex if auto_reindex is None else auto_reindex
+        if should_reindex and report.pages_touched:
+            _run_auto_reindex(paths, report)
     return _sorted_report(report)
+
+
+def _item_key(item: IngestItem) -> str:
+    origin = str(item.laundry_path.resolve()) if item.laundry_path else item.event.id
+    return hashlib.sha256((origin + "\0" + (item.raw_hash if item.laundry_path else "")).encode()).hexdigest()
+
+
+def _with_entity_hints(paths, conn, item, config):
+    aliases, types = _load_alias_map(conn)
+    candidates = []
+    seen = set()
+    folded = item.text.casefold()
+    for name, entity_id in aliases.items():
+        if len(name) < 2 or name.casefold() not in folded or entity_id in seen:
+            continue
+        entity = get_entity(conn, entity_id)
+        if entity and external_allowed(paths.root, path=entity.page_path):
+            candidates.append({"id": entity_id, "name": entity.title, "type": types[entity_id].value})
+            seen.add(entity_id)
+        if len(candidates) >= 30:
+            break
+    return replace(item, hints={"existing_entities": candidates,
+                                "output_language": config.ingest.output_language})
+
+
+def _with_archive_ref(paths: BrainPaths, item: IngestItem, *, failed: bool = False) -> IngestItem:
+    assert item.laundry_path is not None
+    relative = item.laundry_path.relative_to(paths.laundry_dir)
+    directory = paths.laundry_dir / (FAILED_LAUNDRY_DIR_NAME if failed else "processed")
+    target = _unique_processed_path(directory / relative)
+    ref = target.relative_to(paths.root).as_posix()
+    return replace(item, source_ref=ref, event=item.event.model_copy(update={"source_ref": ref}))
+
+
+def _advance_completed_events(paths, conn):
+    ensure_operation_table(conn)
+    cursor = _get_cursor(conn, "events")
+    last = None
+    for event in read_all(paths.events_jsonl):
+        if cursor and event.id <= cursor:
+            continue
+        if event.kind not in {EventKind.BULK_IMPORTED, EventKind.LAUNDRY_INGESTED} and _event_has_payload(event):
+            item = IngestItem("events", event.source_ref, _event_text(paths.root, event), event)
+            if not completed(conn, _item_key(item)) and not completed(conn, "failed:" + _item_key(item)):
+                break
+        last = event.id
+    if last:
+        _set_cursor(conn, "events", last)
+        conn.commit()
 
 
 @coordinated(write=True)
@@ -359,10 +409,22 @@ def _run_dry_ingest(
     return _sorted_report(report)
 
 
-def _stage_extractions(items: list[IngestItem]) -> list[StagedExtraction]:
+def _stage_extractions(items: list[IngestItem], *, paths: BrainPaths | None = None,
+                       config_hash: str = "") -> list[StagedExtraction]:
     staged: list[StagedExtraction] = []
     for item in items:
+        cache = None
+        if paths is not None:
+            cache_key = hashlib.sha256((_item_key(item) + hashlib.sha256(item.text.encode()).hexdigest() + config_hash + "v3").encode()).hexdigest()
+            cache = paths.root / ".brainmem" / "extractions" / f"{cache_key}.json"
+            if cache.is_file():
+                saved = json.loads(cache.read_text(encoding="utf-8"))
+                item = replace(item, event=Event.model_validate(saved["event"]))
+                staged.append(StagedExtraction(item, SignalExtraction.model_validate(saved["extraction"])))
+                continue
         try:
+            if item.read_error:
+                raise IngestError(item.read_error)
             extraction = _detect_item_signal(item)
         except Exception as exc:
             failure_kind = _classify_ingest_failure(exc)
@@ -371,6 +433,9 @@ def _stage_extractions(items: list[IngestItem]) -> list[StagedExtraction]:
             staged.append(StagedExtraction(item=item, error=exc))
             continue
         staged.append(StagedExtraction(item=item, extraction=extraction))
+        if cache is not None:
+            atomic_text(cache, json.dumps({"event": item.event.model_dump(mode="json", exclude={"raw_payload"}),
+                                          "extraction": extraction.model_dump(mode="json")}, ensure_ascii=False))
     return staged
 
 
@@ -395,7 +460,7 @@ def _record_item_content_failure(
         if advance_cursor:
             _set_cursor(conn, "events", item.event.id)
     elif item.laundry_path is not None:
-        _archive_failed_laundry_item(paths, item.laundry_path)
+        _move_protected(item.laundry_path, paths.root / item.source_ref)
 
 
 def _preflight_ingest_provider(config: Config) -> None:
@@ -587,14 +652,21 @@ def _collect_laundry_items(paths: BrainPaths) -> list[IngestItem]:
 
     items: list[IngestItem] = []
     for path in files:
-        text = path.read_text(encoding="utf-8")
-        source_ref = f"laundry/{path.name}"
+        raw = path.read_bytes()
+        read_error = None
+        try:
+            text, provenance = split_provenance(raw.decode("utf-8-sig"))
+        except (UnicodeError, ValueError, BrainError) as exc:
+            text, provenance = "", {}
+            read_error = f"Source text or metadata is invalid ({type(exc).__name__})"
+        source_ref = path.relative_to(paths.root).as_posix()
         event = Event(
             id=str(ulid.ULID()),
             timestamp=_now_utc(),
             kind=EventKind.LAUNDRY_INGESTED,
             source_ref=source_ref,
-            raw_payload=text,
+            raw_payload_path=source_ref,
+            metadata=provenance,
         )
         items.append(
             IngestItem(
@@ -603,6 +675,8 @@ def _collect_laundry_items(paths: BrainPaths) -> list[IngestItem]:
                 text=text,
                 event=event,
                 laundry_path=path,
+                raw_hash=hashlib.sha256(raw).hexdigest(),
+                read_error=read_error,
             )
         )
     return items
@@ -641,6 +715,9 @@ def _collect_event_items(
                 )
             continue
         text = _event_text(paths.root, event)
+        key = _item_key(IngestItem("events", event.source_ref, text, event))
+        if completed(conn, key) or (event_id is None and completed(conn, "failed:" + key)):
+            continue
         items.append(
             IngestItem(
                 source="events",
@@ -711,12 +788,14 @@ def _event_has_payload(event: Event) -> bool:
 
 
 def _detect_item_signal(item: IngestItem) -> SignalExtraction:
+    body, _ = split_provenance(item.text)
     extraction = detect_signal(
-        item.text,
+        body,
         hint={
             "source": item.source,
             "source_ref": item.source_ref,
             "source_event": item.event.id,
+            **item.hints,
         },
     )
     return _normalize_extraction_sources(extraction, item)
@@ -731,6 +810,7 @@ def _normalize_extraction_sources(
             update={
                 "source_event": item.event.id,
                 "source_ref": item.event.source_ref,
+                "predicate": normalize_predicate(fact.predicate),
             }
         )
         for fact in extraction.facts
@@ -761,6 +841,7 @@ def _apply_extraction(
         conn,
         extraction.entities,
         review_writer,
+        config,
     )
 
     _write_tier_proposals(
@@ -771,6 +852,8 @@ def _apply_extraction(
     )
 
     for candidate in extraction.facts:
+        if candidate.confidence < config.ingest.confidence_auto_reject:
+            continue
         normalized = _normalize_candidate(
             conn=conn,
             candidate=candidate,
@@ -797,12 +880,12 @@ def _apply_extraction(
             suggested_page_type=extraction.suggested_page_type,
         )
 
-    for candidate in extraction.procedure_candidates:
+    for procedure_candidate in extraction.procedure_candidates:
         _handle_procedure_candidate(
             paths=paths,
             config=config,
             item=item,
-            candidate=candidate,
+            candidate=procedure_candidate,
             review_writer=review_writer,
             report=report,
             result=result,
@@ -816,12 +899,18 @@ def _resolve_entities(
     conn: sqlite3.Connection,
     signal_entities: list[SignalEntity],
     review_writer: ReviewWriter,
+    config: Config,
 ) -> tuple[dict[str, str], set[str]]:
     entity_map: dict[str, str] = {}
     unresolved: set[str] = set()
 
     for signal_entity in _unique_signal_entities(signal_entities):
-        entity = resolve_entity(conn, signal_entity.name, signal_entity.type)
+        if signal_entity.confidence < config.ingest.confidence_auto_reject:
+            unresolved.add(signal_entity.name)
+            continue
+        entity = resolve_entity(conn, signal_entity.name, signal_entity.type,
+                                confidence=signal_entity.confidence,
+                                auto_accept=config.ingest.confidence_auto_accept)
         if entity is None:
             unresolved.add(signal_entity.name)
             _write_new_entity_review(review_writer, signal_entity)
@@ -834,14 +923,13 @@ def _resolve_entities(
 
 
 def _unique_signal_entities(signal_entities: list[SignalEntity]) -> list[SignalEntity]:
-    seen: set[str] = set()
-    unique: list[SignalEntity] = []
-    for signal_entity in signal_entities:
-        if signal_entity.name in seen:
-            continue
-        seen.add(signal_entity.name)
-        unique.append(signal_entity)
-    return unique
+    from brain.pipeline.resolve import normalize_name
+    unique: dict[str, SignalEntity] = {}
+    for entity in signal_entities:
+        key = normalize_name(entity.name)
+        if key not in unique or unique[key].confidence < entity.confidence:
+            unique[key] = entity
+    return list(unique.values())
 
 
 def _normalize_candidate(
@@ -919,7 +1007,7 @@ def _candidate_entity_id(
     if name in entity_map:
         return entity_map[name]
 
-    entity = resolve_entity(conn, name, hint_type)
+    entity = resolve_entity(conn, name, hint_type, allow_create=False)
     if entity is None:
         unresolved.add(name)
         _write_new_entity_review(
@@ -983,7 +1071,8 @@ def _handle_candidate(
         source_ref=item.source_ref,
         event_id=item.event.id,
         event_date=item.event.timestamp.date().isoformat(),
-        timeline_summary=timeline_summary,
+        timeline_summary=fact_sentence(candidate.subject, candidate.predicate, candidate.object,
+                                       chinese=bool(re.search(r"[\u4e00-\u9fff]", item.text))),
         report=report,
         result=result,
         suggested_page_type=suggested_page_type,
@@ -1042,15 +1131,21 @@ def _touch_subject_page(
 
     timeline_key = (entity.id, event_id)
     if timeline_key not in result.timeline_written:
-        append_timeline(
-            page_path,
-            TimelineEntry(
-                date=event_date,
-                event_id=event_id,
-                description=timeline_summary,
-            ),
-        )
+        existing_page = parse_page(page_path)
+        if not any(f"[event:{event_id}]" in line for line in existing_page.timeline):
+            append_timeline(
+                page_path,
+                TimelineEntry(
+                    date=event_date,
+                    event_id=event_id,
+                    description=timeline_summary,
+                ),
+            )
         result.timeline_written.add(timeline_key)
+
+    # Only machine-owned summaries can refresh automatically.
+    from brain.pipeline.summaries import refresh_generated_summary
+    refresh_generated_summary(conn, page_path, entity.id)
 
     relative = page_path.relative_to(paths.root).as_posix()
     _append_unique(report.pages_touched, relative)
@@ -1140,6 +1235,7 @@ def _write_stub_page(
             tags=[],
             aliases=[],
             external_ids={},
+            entity_type=entity.type.value,
         ),
         compiled_truth="(stub - waiting for more evidence)",
         timeline=[],
@@ -1231,7 +1327,7 @@ def _write_pending_fact_review(
 ) -> None:
     payload = {
         "candidate": candidate.model_dump(mode="json"),
-        "event": item.event.model_dump(mode="json"),
+        "event": _review_event(item),
         "timeline_summary": timeline_summary,
         "suggested_page_type": _enum_value(suggested_page_type),
         "unresolved_entities": unresolved_entities,
@@ -1319,13 +1415,13 @@ def _write_ingest_error_review(
             "## Event",
             "",
             "```json",
-            json.dumps(item.event.model_dump(mode="json"), ensure_ascii=False, indent=2),
+            json.dumps(_review_event(item), ensure_ascii=False, indent=2),
             "```",
             "",
             "## Traceback",
             "",
             "```text",
-            "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)).strip(),
+            type(exc).__name__ + ": " + str(exc)[:300],
             "```",
         ]
     )
@@ -1345,6 +1441,8 @@ def _handle_procedure_candidate(
     auto_reject = config.ingest.confidence_auto_reject
 
     if candidate.confidence < auto_reject:
+        return
+    if _procedure_already_known(paths, candidate):
         return
     validation_error = _procedure_candidate_error(paths, candidate)
     if validation_error is not None:
@@ -1374,7 +1472,7 @@ def _write_procedure_candidate_review(
 ) -> None:
     payload = {
         "candidate": candidate.model_dump(mode="json"),
-        "event": item.event.model_dump(mode="json"),
+        "event": _review_event(item),
         "reason": reason,
     }
     body = "\n".join(
@@ -1407,12 +1505,14 @@ def _record_item_success(
             update={
                 "extracted_facts": result.fact_ids,
                 "affected_pages": sorted(result.page_slugs),
+                "raw_payload": None,
+                "raw_payload_path": item.source_ref,
             }
         )
         append_event(paths.events_jsonl, event)
         if item.laundry_path is None:
             raise IngestError("Laundry item is missing its source path")
-        _archive_laundry_item(paths, item.laundry_path)
+        _move_protected(item.laundry_path, paths.root / item.source_ref)
         report.laundry_archived += 1
         _set_cursor(conn, "laundry", item.source_ref)
         return
@@ -1431,7 +1531,33 @@ def _archive_failed_laundry_item(paths: BrainPaths, path: Path) -> None:
     target_dir = paths.laundry_dir / FAILED_LAUNDRY_DIR_NAME
     target_dir.mkdir(parents=True, exist_ok=True)
     target = _unique_processed_path(target_dir / path.name)
-    shutil.move(str(path), str(target))
+    _move_protected(path, target)
+
+
+def _move_protected(source: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    protect_path(source, None)
+    protect_path(target, source.read_bytes())
+    source.replace(target)
+
+
+def _review_event(item: IngestItem) -> dict:
+    return item.event.model_copy(update={"raw_payload": None, "raw_payload_path": item.source_ref}).model_dump(mode="json")
+
+
+def _procedure_already_known(paths: BrainPaths, candidate: ProcedureCandidate) -> bool:
+    from brain.pipeline.resolve import normalize_name
+    key = normalize_name(candidate.title)
+    for path in paths.procedures_dir.glob("*.md"):
+        page = parse_page(path)
+        if page.frontmatter.slug == candidate.slug or normalize_name(page.frontmatter.title) == key:
+            return True
+    for path in paths.review_dir.glob("*_procedure_candidate.md"):
+        from brain.pipeline.review import parse_review_file
+        parsed = parse_review_file(path).data.get("candidate", {})
+        if parsed.get("suggested_slug") == candidate.slug or normalize_name(parsed.get("title", "")) == key:
+            return True
+    return False
 
 
 def _unique_processed_path(path: Path) -> Path:
@@ -1560,7 +1686,7 @@ def _connect_for_ingest(path: Path, *, dry_run: bool) -> sqlite3.Connection:
     if not dry_run:
         return connect(path)
 
-    conn = sqlite3.connect(sqlite_uri(path, mode="ro"), uri=True)
+    conn = connect_readonly(path)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -1598,7 +1724,6 @@ def _set_cursor(conn: sqlite3.Connection, source: str, last_processed: str) -> N
         """,
         (source, last_processed, _now_utc().isoformat()),
     )
-    conn.commit()
 
 
 def _next_review_seq(review_dir: Path, date: str) -> int:
@@ -1606,7 +1731,7 @@ def _next_review_seq(review_dir: Path, date: str) -> int:
         return 1
 
     max_seq = 0
-    for path in review_dir.glob(f"{date}_*_*.md"):
+    for path in review_dir.rglob(f"{date}_*_*.md"):
         parts = path.stem.split("_", maxsplit=2)
         if len(parts) < 3:
             continue
@@ -1641,7 +1766,7 @@ def _write_lf(path: Path, text: str) -> None:
     normalized = text.replace("\r\n", "\n").replace("\r", "\n")
     if not normalized.endswith("\n"):
         normalized += "\n"
-    path.write_text(normalized, encoding="utf-8", newline="\n")
+    atomic_text(path, normalized)
 
 
 def _with_decision_section(body: str) -> str:

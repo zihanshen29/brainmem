@@ -1,6 +1,8 @@
 import json
 from typing import Any
 
+from brain.predicates import VOCABULARY
+
 JSON_ONLY_INSTRUCTIONS = (
     "Return only valid JSON. Do not include markdown fences, commentary, or trailing text."
 )
@@ -14,18 +16,22 @@ def build_signal_extraction_prompt(text: str) -> str:
             JSON_ONLY_INSTRUCTIONS,
             "Return exactly one JSON object with these top-level keys:",
             "- entities: array of objects with keys name, type, confidence, metadata.",
-            "- facts: array of objects with keys subject, predicate, object, object_type, valid_from, valid_to, source_event, source_ref, confidence.",
-            "- procedure_candidates: array of objects with keys suggested_slug, title, summary, steps, source_event, source_ref, confidence, metadata.",
+            "- facts: array of objects with keys subject, predicate, object, object_type, valid_from, valid_to, confidence.",
+            "- procedure_candidates: array of objects with keys suggested_slug, title, summary, steps, confidence, metadata.",
             "- timeline_summary: one concise sentence summarizing the durable event.",
             "- suggested_page_type: one of entity, project, concept, event, experience, conversation, or null.",
             "Do not return a top-level signals key.",
-            "Entity type must be one of person, org, concept, project, event, place, or null.",
+            "Entity type must be one of person, org, concept, project, event, place, unknown, or null. Use person only for actual people.",
             "Entity metadata must always be a JSON object; use {} when there is no metadata, never null.",
             "Fact object_type must be one of entity, literal, date, number.",
             "Do not use semantic labels such as person, org, place, location, concept, or project as fact object_type; use entity when the object is an entity-like thing.",
-            "For each fact, subject should be a lowercase ASCII slug when possible.",
+            "Preserve original entity names and language. Use an existing candidate id when it matches; never translate names into invented slugs.",
+            "Extract only durable, concrete entities. Dates, file names, hashes, generic actions and test commands are values, not new entities.",
+            "Use these canonical predicates when applicable: " + ", ".join(VOCABULARY),
+            "Unknown predicates must be concise snake_case; do not encode objects or dates in predicate names.",
+            "Keep summaries, titles and prose in the source language unless the Hint specifies output_language.",
             "Procedure candidates are reusable runbooks or SOPs, not one-off status updates. Use lowercase ASCII hyphenated suggested_slug values.",
-            "If the input contains a Hint JSON with source_event or source_ref, copy those exact values into every fact and procedure candidate.",
+            "Do not output source_event or source_ref: the runtime supplies provenance. Hint metadata is not memory content.",
             "If no durable facts are present, return an empty facts array but still return entities and timeline_summary.",
             "If no reusable procedures are present, return an empty procedure_candidates array.",
             "Use null for unknown optional values; do not omit required keys.",
@@ -66,6 +72,7 @@ def build_compiled_truth_prompt(
         [
             "Rewrite the compiled truth for this memory page from the timeline.",
             "Keep it concise, factual, and consistent with the newest timeline evidence.",
+            "Preserve the language of the evidence and human-written content. Ignore collection metadata.",
             JSON_ONLY_INSTRUCTIONS,
             "Return an object with exactly one key: compiled_truth.",
             "",
@@ -115,6 +122,7 @@ def build_promote_chat_prompt(
             "Return an object with keys: title, compiled_truth, timeline_description.",
             "title must be concise and human-readable.",
             "compiled_truth must summarize the stable useful content from the chat.",
+            "Keep the source language and original names; do not translate unless explicitly requested.",
             "timeline_description must be one single-line sentence describing the promoted chat.",
             "",
             "Conversation evidence JSON:",

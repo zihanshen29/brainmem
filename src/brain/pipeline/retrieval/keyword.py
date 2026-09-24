@@ -62,7 +62,11 @@ def tokenize(text: str) -> list[str]:
     tokens = TOKEN_RE.findall(normalized)
     if CJK_RE.search(normalized):
         try:
+            import logging
+
             import jieba
+
+            jieba.setLogLevel(logging.WARNING)
 
             tokens.extend(token.strip() for token in jieba.lcut(normalized) if token.strip())
         except ImportError:

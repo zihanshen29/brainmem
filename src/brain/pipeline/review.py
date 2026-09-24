@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
 import json
 import re
@@ -24,7 +25,6 @@ from brain.db.tier import record_tier_decision
 from brain.exceptions import BrainError
 from brain.git_ops import commit
 from brain.ledger import append_event
-from brain.llm import client as llm_client
 from brain.models import (
     Entity,
     EntityAliasSource,
@@ -41,7 +41,7 @@ from brain.models import (
 )
 from brain.models.page import SLUG_PATTERN
 from brain.pages import parse_page, write_page
-from brain.pages.timeline import TimelineEntry, format_entry, parse_entry
+from brain.pages.timeline import TimelineEntry, format_entry
 from brain.paths import BrainPaths
 
 
@@ -56,6 +56,7 @@ class ReviewKind(StrEnum):
     TIER_PROPOSAL = "tier_proposal"
     LINT_FINDING = "lint_finding"
     NEW_ENTITY_REVIEW = "new_entity_review"
+    SUMMARY_REFRESH = "summary_refresh"
 
 
 class ReviewAction(StrEnum):
@@ -157,7 +158,7 @@ class ReviewQuarantineReport(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
-JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(?P<body>.*?)```", re.IGNORECASE | re.DOTALL)
+JSON_FENCE_RE = re.compile(r"^```(?P<language>[^\r\n]*)\r?\n(?P<body>.*?)^```[ \t]*$", re.IGNORECASE | re.DOTALL | re.MULTILINE)
 CHECKBOX_RE = re.compile(r"^\s*(?:[-*]\s*)?\[(?P<mark>[xX])\]\s*(?P<label>.+?)\s*$")
 KEY_VALUE_RE = re.compile(r"^\s*(?:[-*]\s*)?(?P<key>[A-Za-z_][\w-]*):\s*(?P<value>.*?)\s*$")
 REVIEW_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_[^_]+_(?P<kind>.+)$")
@@ -377,12 +378,17 @@ def _defer_review_item(conn: sqlite3.Connection, item: ReviewItem) -> ReviewAppl
     paths = BrainPaths(_infer_brain_root(decision.path))
     with conn:
         _record_review_event(paths, decision, "deferred", report)
-    report.archived_path = _mark_and_archive(
-        decision.path,
-        ReviewStatus.DEFERRED,
-        decision.action,
-    )
+    _keep_deferred_pending(decision.path)
     return report
+
+
+def _keep_deferred_pending(path: Path) -> None:
+    from brain.transactions import atomic_text
+    post = frontmatter.loads(path.read_text(encoding="utf-8"))
+    post["status"] = "pending"
+    post["deferred_at"] = _now_utc().isoformat()
+    post.content = re.sub(r"(?im)^(\s*(?:[-*]\s*)?)\[[xX]\](\s*defer\s*)$", r"\1[ ]\2", post.content)
+    atomic_text(path, frontmatter.dumps(post, sort_keys=False) + "\n")
 
 
 def _invalid_payload_reason(path: Path) -> str | None:
@@ -425,11 +431,7 @@ def apply_decision(conn: sqlite3.Connection, decision: ReviewDecision) -> Review
     if decision.action is ReviewAction.DEFER:
         with conn:
             _record_review_event(paths, decision, "deferred", report)
-        report.archived_path = _mark_and_archive(
-            decision.path,
-            ReviewStatus.DEFERRED,
-            decision.action,
-        )
+        _keep_deferred_pending(decision.path)
         report.skipped = True
         return report
     if decision.action is ReviewAction.REJECT:
@@ -446,9 +448,31 @@ def apply_decision(conn: sqlite3.Connection, decision: ReviewDecision) -> Review
         return _approve_new_entity_review(conn, paths, decision, report)
     if decision.kind is ReviewKind.PROCEDURE_CANDIDATE:
         return _approve_procedure_candidate(conn, paths, decision, report)
+    if decision.kind is ReviewKind.SUMMARY_REFRESH:
+        return _approve_summary(paths, decision, report)
 
     report.errors.append(f"Approve is not implemented for review kind: {decision.kind.value}")
     report.skipped = True
+    return report
+
+
+def _approve_summary(paths: BrainPaths, decision: ReviewDecision, report: ReviewApplyReport):
+    path = (paths.root / str(decision.data.get("page_path", ""))).resolve()
+    if not path.is_relative_to(paths.pages_dir.resolve()) or not path.is_file():
+        raise BrainError("Invalid summary page path")
+    if hashlib.sha256(path.read_bytes()).hexdigest() != decision.data.get("page_hash"):
+        raise BrainError("Page changed since this draft; create a fresh summary review")
+    text = decision.data.get("compiled_truth")
+    if not isinstance(text, str) or not text.strip():
+        raise BrainError("Summary draft is empty")
+    page = parse_page(path)
+    page.compiled_truth = text
+    page.frontmatter.summary_hash = None  # Approved text becomes human-controlled.
+    page.frontmatter.updated = _now_utc()
+    write_page(path, page)
+    report.pages_touched.append(path.relative_to(paths.root).as_posix())
+    report.archived_path = _mark_and_archive(decision.path, ReviewStatus.APPROVED, decision.action)
+    report.applied = True
     return report
 
 
@@ -478,6 +502,10 @@ def _reject_decision(
                 record_tier_decision(conn, int(proposal["id"]), ReviewStatus.REJECTED.value)
                 report.tier_proposal_id = int(proposal["id"])
                 report.entity_id = str(proposal["entity_id"])
+                entity = get_entity(conn, report.entity_id)
+                if entity is not None:
+                    entity.metadata["tier_rejected_at_count"] = entity.mention_count
+                    upsert_entity(conn, entity)
         _record_review_event(paths, decision, "rejected", report)
 
     report.archived_path = _mark_and_archive(decision.path, ReviewStatus.REJECTED, decision.action)
@@ -807,8 +835,6 @@ def _approve_tier_proposal(
         return report
 
     page = parse_page(page_path)
-    timeline = [parse_entry(line) for line in page.timeline]
-    compiled_truth = llm_client.rewrite_compiled_truth(timeline, page.compiled_truth)
     report.pages_touched.append(page_path.relative_to(paths.root).as_posix())
 
     with conn:
@@ -824,7 +850,7 @@ def _approve_tier_proposal(
     write_page(
         page_path,
         page.model_copy(
-            update={"frontmatter": updated_frontmatter, "compiled_truth": compiled_truth}
+            update={"frontmatter": updated_frontmatter}
         ),
     )
     report.archived_path = _mark_and_archive(decision.path, ReviewStatus.APPROVED, decision.action)
@@ -999,6 +1025,10 @@ def _extract_review_data(kind: ReviewKind, content: str) -> tuple[dict[str, Any]
         data.update(_tier_json(json_values))
     elif kind is ReviewKind.PROCEDURE_CANDIDATE:
         data.update(_procedure_candidate_json(json_values))
+    elif kind is ReviewKind.SUMMARY_REFRESH:
+        for value in json_values:
+            if isinstance(value, dict):
+                data.update(value)
 
     return data, errors
 
@@ -1029,6 +1059,8 @@ def _active_facts_from_data(data: dict[str, Any]) -> tuple[list[Fact], list[str]
 def _json_fence_values(content: str, errors: list[str]) -> list[Any]:
     values: list[Any] = []
     for match in JSON_FENCE_RE.finditer(content):
+        if match["language"].strip().casefold() not in {"", "json"}:
+            continue
         try:
             values.append(json.loads(match.group("body").strip()))
         except json.JSONDecodeError as exc:

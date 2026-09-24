@@ -731,4 +731,4 @@ def test_extract_impl_deepseek_uses_pro_model_by_default(
 
     assert result == '{"ok": true}'
     assert calls[0]["model"] == "deepseek-config-pro"
-    assert "extra_body" not in calls[0]
+    assert calls[0]["extra_body"] == {"thinking": {"type": "disabled"}}

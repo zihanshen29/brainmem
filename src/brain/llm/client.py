@@ -45,6 +45,15 @@ RETRYABLE_STRUCTURED_RESPONSE_ERRORS = {
 }
 
 
+class TruncatedResponseError(LLMError):
+    """The provider exhausted its output budget; retry only with a smaller input."""
+
+
+def _max_output_tokens() -> int:
+    path = get_config_path()
+    return load_config(Path(path)).llm.max_output_tokens if path else MAX_OUTPUT_TOKENS
+
+
 @dataclass(frozen=True)
 class _LLMSettings:
     provider: str
@@ -227,6 +236,8 @@ def _normalize_signal_facts(value: Any) -> Any:
             facts.append(fact)
             continue
         normalized = dict(fact)
+        # Source fields are runtime-owned; the ingest boundary replaces this sentinel.
+        normalized.setdefault("source_event", "runtime")
         object_value = normalized.get("object")
         if isinstance(object_value, int | float | bool):
             normalized["object"] = json.dumps(object_value, ensure_ascii=False)
@@ -326,8 +337,10 @@ def _extract_openai(prompt: str, settings: _LLMSettings, *, use_fast: bool) -> s
     response = client.responses.create(
         model=settings.selected_model(use_fast=use_fast),
         input=prompt,
-        max_output_tokens=MAX_OUTPUT_TOKENS,
+        max_output_tokens=_max_output_tokens(),
     )
+    if getattr(response, "status", None) == "incomplete":
+        raise TruncatedResponseError("LLM response was truncated; reduce input or raise llm.max_output_tokens")
     text = getattr(response, "output_text", None)
     if not isinstance(text, str) or not text.strip():
         raise LLMError("LLM response did not contain text")
@@ -346,8 +359,9 @@ def _extract_deepseek(prompt: str, settings: _LLMSettings, *, use_fast: bool) ->
         "model": settings.selected_model(use_fast=use_fast),
         "messages": [{"role": "user", "content": prompt}],
         "response_format": {"type": "json_object"},
-        "max_tokens": MAX_OUTPUT_TOKENS,
+        "max_tokens": _max_output_tokens(),
         "stream": False,
+        "extra_body": {"thinking": {"type": "disabled"}},
     }
     if use_fast:
         # DeepSeek V4 enables thinking by default. For bounded structured
@@ -359,6 +373,8 @@ def _extract_deepseek(prompt: str, settings: _LLMSettings, *, use_fast: bool) ->
     response = client.chat.completions.create(
         **request_kwargs,
     )
+    if getattr(response.choices[0], "finish_reason", None) == "length":
+        raise TruncatedResponseError("LLM response was truncated; reduce input or raise llm.max_output_tokens")
     content = response.choices[0].message.content
     if not isinstance(content, str) or not content.strip():
         raise LLMError("LLM response did not contain text")
@@ -372,9 +388,11 @@ def _extract_anthropic(prompt: str, settings: _LLMSettings, *, use_fast: bool) -
     client = Anthropic(**client_kwargs)
     message = client.messages.create(
         model=settings.selected_model(use_fast=use_fast),
-        max_tokens=MAX_OUTPUT_TOKENS,
+        max_tokens=_max_output_tokens(),
         messages=[{"role": "user", "content": prompt}],
     )
+    if getattr(message, "stop_reason", None) == "max_tokens":
+        raise TruncatedResponseError("LLM response was truncated; reduce input or raise llm.max_output_tokens")
     return _extract_text_from_message(message)
 
 

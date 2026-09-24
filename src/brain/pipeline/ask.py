@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from brain.concurrency import coordinated
 from brain.config import EmbeddingConfig, load_config
-from brain.db.connection import sqlite_uri
+from brain.db.connection import connect_readonly
 from brain.exceptions import BrainError
 from brain.models import (
     EmbeddingChunk,
@@ -123,6 +123,9 @@ def ask(
     selected_type = _normalize_page_type(page_type)
     config = load_config(paths.config_path)
     requested_mode = _normalize_mode(mode or config.retrieval.default_mode)
+    from brain.privacy import external_allowed, require_external
+    if requested_mode in {"hybrid", "semantic"} or explain:
+        require_external(paths.root, text=normalized_query)
     trace = AskModeTrace(mode=requested_mode) if show_sql or explain or debug else None
     classifier = _classify_query(normalized_query)
     if trace is not None:
@@ -220,7 +223,11 @@ def ask(
     answer: str | None = None
     sources: list[str] = []
     if explain:
-        answer, sources, explain_note = _answer_question(normalized_query, summaries)
+        permitted_summaries = [summary for summary in summaries if external_allowed(
+            paths.root, path=summary.relative_path)]
+        if len(permitted_summaries) != len(summaries):
+            warnings.append("Local-only results excluded from the external explanation.")
+        answer, sources, explain_note = _answer_question(normalized_query, permitted_summaries)
         if trace is not None:
             trace.explain = explain_note
 
@@ -490,8 +497,8 @@ def _rrf_fuse(*paths: list[RetrievalHit], k: int) -> list[FusedResult]:
     try:
         from brain.pipeline.retrieval.rrf import rrf_fuse as retrieval_rrf_fuse
     except ImportError:
-        retrieval_rrf_fuse = None
-    if retrieval_rrf_fuse is not None:
+        pass
+    else:
         return list(retrieval_rrf_fuse(*paths, k=k))
 
     page_scores: dict[str, dict[str, Any]] = {}
@@ -892,6 +899,8 @@ def _recent_timeline(lines: list[str]) -> list[str]:
 
 
 def _answer_question(query: str, pages: list[AskPageSummary]) -> tuple[str | None, list[str], str]:
+    if not pages:
+        return None, [], "No provider-allowed evidence available"
     try:
         from brain.llm import client
     except Exception as exc:  # pragma: no cover - defensive seam for optional LLM stack
@@ -924,7 +933,7 @@ def _trace_sql(trace: AskModeTrace | None, sql: str, params: tuple[Any, ...]) ->
 
 
 def _connect_readonly(path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(sqlite_uri(path, mode="ro"), uri=True)
+    conn = connect_readonly(path)
     conn.row_factory = sqlite3.Row
     return conn
 

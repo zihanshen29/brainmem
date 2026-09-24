@@ -37,7 +37,7 @@ def test_cli_ask_default_output_lists_ranked_pages(
     assert "Compiled truth: Alice maintains the Brain memory system." in result.stdout
     assert "Recent: 2026-04-28: Alice started the ask CLI task." in result.stdout
     assert "Score: " in result.stdout
-    assert "Falling back to keyword-only mode" in result.stderr
+    assert result.stderr == ""
 
 
 def test_cli_ask_type_filters_results(brain_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -144,7 +144,7 @@ def test_cli_ask_debug_outputs_paths_and_rrf(
     assert "Keyword path:" in result.stdout
     assert "SQL path:" in result.stdout
     assert "RRF fusion:" in result.stdout
-    assert "Warning: No usable embeddings found." in result.stderr
+    assert result.stderr == ""
 
 
 def test_cli_ask_explain_outputs_mocked_answer(

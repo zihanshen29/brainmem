@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import os
 import sqlite3
 import subprocess
@@ -29,7 +30,7 @@ def brain_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "brain"
     init_brain(root)
     monkeypatch.setattr(
-        entity_merge_pipeline.llm_client,
+        importlib.import_module("brain.llm.client"),
         "rewrite_compiled_truth",
         lambda timeline, current_truth: f"rewritten {len(timeline)} from {current_truth}",
     )
@@ -82,7 +83,7 @@ def test_entity_merge_happy_path_updates_db_pages_links_and_index(brain_root: Pa
         f"- 2026-04-02 [event:{ALLY_EVENT}]: Ally joined [[project-brain]].",
     ]
     assert page.sources == ["events/alice.jsonl", "events/ally.jsonl"]
-    assert page.compiled_truth == "rewritten 2 from Alice truth"
+    assert page.compiled_truth == "Alice truth\n\nAlly truth"
 
     project_text = (brain_root / "pages" / "projects" / "brain.md").read_text(encoding="utf-8")
     assert "[[alice|Ally display]]" in project_text
@@ -110,7 +111,7 @@ def test_entity_merge_auto_commit_includes_rewritten_external_pages(brain_root: 
     assert "pages/projects/brain.md" in committed_paths
     assert "pages/entities/alice.md" in committed_paths
     assert "pages/index.md" in committed_paths
-    assert "brain.db" in committed_paths
+    assert "brain.db" not in committed_paths
     assert "[[alice|Ally display]]" in (
         brain_root / "pages" / "projects" / "brain.md"
     ).read_text(encoding="utf-8")

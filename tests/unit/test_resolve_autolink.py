@@ -86,15 +86,13 @@ def test_resolve_ascii_name_creates_entity(conn: sqlite3.Connection) -> None:
     assert get_entity(conn, "brain-dump") == resolved
 
 
-def test_resolve_ascii_name_without_hint_creates_person_entity_page(
+def test_resolve_name_without_type_requires_review(
     conn: sqlite3.Connection,
 ) -> None:
     resolved = resolve_entity(conn, "xiaozhang", None)
 
-    assert resolved is not None
-    assert resolved.id == "xiaozhang"
-    assert resolved.type is EntityType.PERSON
-    assert resolved.page_path == "pages/entities/xiaozhang.md"
+    assert resolved is None
+    assert entity_count(conn) == 0
 
 
 @pytest.mark.parametrize(
@@ -140,15 +138,17 @@ def test_resolve_ascii_slug_compact_match_reuses_existing_entity(
     assert entity_count(conn) == 1
 
 
-def test_resolve_non_ascii_first_entity_returns_none_without_db_write(
+def test_resolve_non_ascii_typed_entity_uses_same_confidence_gate(
     conn: sqlite3.Connection,
 ) -> None:
     before = entity_count(conn)
 
     resolved = resolve_entity(conn, "\u65b0\u670b\u53cb", EntityType.PERSON)
 
-    assert resolved is None
-    assert entity_count(conn) == before
+    assert resolved is not None
+    assert resolved.title == "\u65b0\u670b\u53cb"
+    assert resolved.type is EntityType.PERSON
+    assert entity_count(conn) == before + 1
 
 
 def test_extract_backlinks_alias_wikilink_dedupe_and_line_numbers() -> None:

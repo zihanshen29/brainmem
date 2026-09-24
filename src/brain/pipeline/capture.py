@@ -42,6 +42,9 @@ def capture(
         raise BrainError(f"Unsupported capture source: {source}")
     if not text.strip():
         raise BrainError("Capture content is empty")
+    from brain.privacy import contains_secret
+    if contains_secret(text):
+        raise BrainError("Possible secret detected; remove it before capture")
 
     paths = BrainPaths(Path(brain_root))
     config = load_config(paths.config_path)

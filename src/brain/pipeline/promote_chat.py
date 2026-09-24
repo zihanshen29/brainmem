@@ -46,6 +46,10 @@ def promote_chat(
         raise BrainError(f"Event is not an ai_chat event: {source_event.id}")
 
     raw_text = _read_chat_text(paths.root, source_event)
+    from brain.privacy import require_external
+    require_external(paths.root, text=raw_text,
+                     path=source_event.raw_payload_path or source_event.source_ref,
+                     metadata=source_event.metadata)
     _ensure_not_already_promoted(paths, source_event.id)
 
     draft = llm_client.promote_chat(raw_text, title_hint=title, slug_hint=slug)

@@ -249,8 +249,9 @@ def test_reindex_closes_database_before_auto_commit(brain_root: Path, monkeypatc
     state = {"closed": False}
 
     class TrackingConnection:
-        def __init__(self, path: Path) -> None:
-            self._conn = real_connect(path)
+        def __init__(self, path: Path, **kwargs) -> None:
+            state["closed"] = False
+            self._conn = real_connect(path, **kwargs)
 
         def __getattr__(self, name: str):
             return getattr(self._conn, name)
