@@ -19,7 +19,15 @@ jobs:
             sed -nE 's/^([^:]+):([0-9]+): error: (.*)$/::error file=\1,line=\2::\3/p' mypy.txt
             exit 1
           fi
-      - run: pytest -p no:cacheprovider
+      - name: pytest
+        # One annotation lists the failing tests so they are readable without the raw log.
+        run: |
+          if ! pytest -p no:cacheprovider -q -rfE > pytest.txt 2>&1; then
+            tail -n 300 pytest.txt
+            summary=$(grep -E '^(FAILED|ERROR) ' pytest.txt | head -80 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=pytest failures::${summary}"
+            exit 1
+          fi
         env:
           PYTHONPATH: tests/offline
           GIT_CONFIG_GLOBAL: /dev/null
