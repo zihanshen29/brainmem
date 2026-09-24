@@ -111,3 +111,35 @@ def test_known_fact_does_not_return_as_low_confidence_review(brain_root):
     report = apply(brain_root, SignalExtraction(facts=[candidate(confidence=0.65)], timeline_summary='再次提及 SQLite。'))
     assert report.facts_added == 0
     assert report.review_items_created == 0
+
+
+def test_path_object_does_not_link_to_legacy_path_entity(brain_root):
+    with closing(connect(brain_root / 'brain.db')) as conn, conn:
+        seed(conn)
+        upsert_entity(conn, Entity(id='e-docu-sample', title=r'E:\docu\sample', type='project',
+                                   page_path='pages/projects/e-docu-sample.md',
+                                   first_seen=NOW, last_seen=NOW))
+        upsert_entity(conn, Entity(id='qwen-model', title='qwen3.7-plus', type='concept',
+                                   page_path='pages/concepts/qwen-model.md',
+                                   first_seen=NOW, last_seen=NOW))
+    report = apply(brain_root, SignalExtraction(facts=[
+        candidate(predicate='related_to', object=r'E:\docu\sample', object_type='entity', confidence=0.9),
+        candidate(predicate='uses', object='qwen3.7-plus', object_type='entity', confidence=0.9),
+    ], timeline_summary='项目目录与模型。'))
+    assert report.facts_added == 2
+    with closing(connect(brain_root / 'brain.db')) as conn:
+        rows = {r['predicate']: (r['object'], r['object_type'])
+                for r in conn.execute('SELECT predicate, object, object_type FROM facts')}
+    assert rows['related_to'] == (r'E:\docu\sample', 'literal')
+    assert rows['uses'] == ('qwen-model', 'entity')
+
+
+def test_restated_fact_is_not_queued_again_while_its_review_is_pending(brain_root):
+    with closing(connect(brain_root / 'brain.db')) as conn, conn:
+        seed(conn)
+    extraction = SignalExtraction(facts=[candidate(confidence=0.7)], timeline_summary='项目使用 SQLite。')
+    first = apply(brain_root, extraction, threshold=0.85)
+    second = apply(brain_root, extraction, threshold=0.85)
+    assert first.review_items_created == 1
+    assert second.review_items_created == 0
+    assert [item.kind.value for item in list_pending(brain_root)] == ['low_confidence_fact']

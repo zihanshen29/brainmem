@@ -187,6 +187,17 @@ class ReviewWriter:
     date: str
     created_at: datetime
     next_seq: int
+    pending_keys: set[tuple[str, str, str, str]] | None = field(default=None, repr=False)
+
+    def is_pending(self, kind: str, candidate: FactCandidate) -> bool:
+        """Return True when an identical fact already waits for a decision of this kind."""
+        if self.pending_keys is None:
+            self.pending_keys = _pending_review_keys(self.paths.review_dir)
+        key = (kind, candidate.subject, candidate.predicate, str(candidate.object))
+        if key in self.pending_keys:
+            return True
+        self.pending_keys.add(key)
+        return False
 
     @classmethod
     def create(cls, paths: BrainPaths, report: IngestReport) -> ReviewWriter:
@@ -910,6 +921,27 @@ def _incidental_value(name: str) -> bool:
     ))
 
 
+_ARTIFACT_RE = re.compile(
+    r"^(?:[a-zA-Z]:[\\/]|\\\\|https?://)|"
+    r"\.(?:md|txt|json|toml|ya?ml|py|ts|tsx|js|jsx|html|ps1|sh|pdf|docx?)$",
+    re.IGNORECASE,
+)
+
+
+def _artifact_value(name: str) -> bool:
+    """Paths, URLs and file names identify artifacts, never durable entities."""
+    return bool(_ARTIFACT_RE.search(name.strip()))
+
+
+def _only_artifact_entities(conn, entity_ids: list[str]) -> bool:
+    # Older ingests registered some paths as entities; they must not keep attracting facts.
+    placeholders = ",".join("?" for _ in entity_ids)
+    titles = conn.execute(
+        f"SELECT title FROM entities WHERE id IN ({placeholders})", entity_ids
+    ).fetchall()
+    return bool(titles) and all(_artifact_value(row[0]) for row in titles)
+
+
 def _focus_extraction(conn, extraction: SignalExtraction, reject: float) -> SignalExtraction:
     # Unused mentions remain in the source/cache; only factual endpoints need identity work.
     facts = []
@@ -917,10 +949,12 @@ def _focus_extraction(conn, extraction: SignalExtraction, reject: float) -> Sign
     for candidate in extraction.facts:
         if candidate.confidence < reject:
             continue
-        if (candidate.object_type is FactObjectType.ENTITY
-                and _incidental_value(candidate.object)
-                and not matching_entity_ids(conn, candidate.object)):
-            candidate = candidate.model_copy(update={"object_type": FactObjectType.LITERAL})
+        if candidate.object_type is FactObjectType.ENTITY and _incidental_value(candidate.object):
+            matches = matching_entity_ids(conn, candidate.object)
+            if not matches or (
+                _artifact_value(candidate.object) and _only_artifact_entities(conn, matches)
+            ):
+                candidate = candidate.model_copy(update={"object_type": FactObjectType.LITERAL})
         facts.append(candidate)
         referenced.add(normalize_name(candidate.subject))
         if candidate.object_type is FactObjectType.ENTITY:
@@ -1345,6 +1379,8 @@ def _write_low_confidence_review(
     review_writer: ReviewWriter,
     candidate: FactCandidate,
 ) -> None:
+    if review_writer.is_pending("low_confidence_fact", candidate):
+        return
     body = "\n".join(
         [
             "# Low confidence fact",
@@ -1365,6 +1401,8 @@ def _write_pending_fact_review(
     suggested_page_type: PageType | None,
     unresolved_entities: list[str],
 ) -> None:
+    if review_writer.is_pending("pending_fact", candidate):
+        return
     payload = {
         "candidate": candidate.model_dump(mode="json"),
         "event": _review_event(item),
@@ -1391,6 +1429,8 @@ def _write_fact_conflict_review(
     candidate: FactCandidate,
     active_facts: list[Fact],
 ) -> None:
+    if review_writer.is_pending("fact_conflict", candidate):
+        return
     body = "\n".join(
         [
             "# Fact conflict",
@@ -1764,6 +1804,35 @@ def _set_cursor(conn: sqlite3.Connection, source: str, last_processed: str) -> N
         """,
         (source, last_processed, _now_utc().isoformat()),
     )
+
+
+_DEDUPED_REVIEW_KINDS = ("low_confidence_fact", "pending_fact", "fact_conflict")
+
+
+def _pending_review_keys(review_dir: Path) -> set[tuple[str, str, str, str]]:
+    """Index fact reviews still waiting in the queue so restated facts are not re-queued."""
+    keys: set[tuple[str, str, str, str]] = set()
+    if not review_dir.is_dir():
+        return keys
+    for path in review_dir.glob("*.md"):
+        kind = path.stem.split("_", maxsplit=2)[-1]
+        if kind not in _DEDUPED_REVIEW_KINDS:
+            continue
+        text = path.read_text(encoding="utf-8")
+        if not re.search(r"(?m)^status:\s*pending\s*$", text):
+            continue
+        match = re.search(r"(?ms)^```json\r?\n(.*?)^```", text)
+        if match is None:
+            continue
+        try:
+            data = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+        candidate = data.get("candidate", data) if isinstance(data, dict) else None
+        if isinstance(candidate, dict) and {"subject", "predicate", "object"} <= candidate.keys():
+            keys.add((kind, str(candidate["subject"]), str(candidate["predicate"]),
+                      str(candidate["object"])))
+    return keys
 
 
 def _next_review_seq(review_dir: Path, date: str) -> int:

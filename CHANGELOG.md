@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Keep path, URL and file-name objects literal even when an older ingest
+  registered them as entities, and do not queue a fact review again while an
+  identical review is still pending.
 - Reduce ingest review noise by retaining artifact/version objects as literal
   facts, resolving only factual endpoints, and separating fact/entity thresholds.
   Resolved human-approved pending facts no longer return for confidence review.
