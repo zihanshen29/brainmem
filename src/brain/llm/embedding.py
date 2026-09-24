@@ -67,8 +67,11 @@ class OpenAICompatibleEmbeddingClient:
 
         client_kwargs: dict[str, str] = {}
         resolved_api_key = api_key if api_key is not None else os.environ.get(self._config.api_key_env)
-        if resolved_api_key:
-            client_kwargs["api_key"] = resolved_api_key
+        if not resolved_api_key or not resolved_api_key.strip():
+            raise EmbeddingError(
+                f"Embedding API key environment variable {self._config.api_key_env!r} is not set"
+            )
+        client_kwargs["api_key"] = resolved_api_key
         if self._config.base_url:
             client_kwargs["base_url"] = self._config.base_url
         return OpenAI(**client_kwargs)

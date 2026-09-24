@@ -700,6 +700,7 @@ def test_extract_impl_deepseek_uses_pro_model_by_default(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.setenv("CUSTOM_DEEPSEEK_API_KEY", "test-key")
     config_path = tmp_path / "config.toml"
     config_path.write_text(deepseek_config_text(tmp_path / "brain"), encoding="utf-8", newline="\n")
     monkeypatch.setenv(llm_client.BRAIN_CONFIG_ENV, str(config_path))

@@ -116,7 +116,7 @@ def import_path(
     if source_path is None:
         raise BrainError("Import path is required unless --resume is set")
 
-    source = Path(source_path).expanduser()
+    source = Path(source_path).expanduser().resolve()
     source_root = _source_root(source)
     files = _discover_files(source, normalized_kinds)
     estimated_docs = sum(_estimate_docs(file.path) for file in files)
@@ -190,6 +190,11 @@ def _resume_import(
             raise BrainError("No unfinished import job to resume")
 
         job_id = str(job["id"])
+        if not Path(str(job["source_path"])).is_absolute():
+            raise BrainError(
+                "Legacy import job has a relative source path; abort the job and re-import "
+                "from its original source to avoid resuming against another directory"
+            )
         source_root = _source_root(Path(str(job["source_path"])))
         rows = _pending_file_rows(conn, job_id)
         files = [
@@ -252,6 +257,8 @@ def _process_job_files(
     for index, file in enumerate(files, start=1):
         laundry_paths: list[Path] = []
         try:
+            if _file_hash(file.path) != file.file_hash:
+                raise BrainError("Source file changed since discovery; re-import the changed source")
             documents = _extract_documents(file.path)
             for sequence, document in enumerate(documents, start=1):
                 laundry_paths.append(_write_laundry_document(paths, job_id, file.path, document, sequence))
@@ -630,13 +637,12 @@ def _finish_job(conn: sqlite3.Connection, job_id: str, report: ImportReport) -> 
         """
         UPDATE import_jobs
         SET status = ?,
-            finished_at = ?,
-            processed_files = ?,
-            failed_files = ?
+            finished_at = ?
         WHERE id = ?
         """,
-        (status, _now_utc().isoformat(), report.processed, report.failed, job_id),
+        (status, _now_utc().isoformat(), job_id),
     )
+    _refresh_job_counts(conn, job_id)
     conn.commit()
 
 

@@ -321,7 +321,7 @@ def _resolve_llm_settings(preferred_provider: str | None = None) -> _LLMSettings
 def _extract_openai(prompt: str, settings: _LLMSettings, *, use_fast: bool) -> str:
     from openai import OpenAI
 
-    client_kwargs: dict[str, Any] = {"api_key": settings.api_key} if settings.api_key else {}
+    client_kwargs: dict[str, Any] = {"api_key": _require_api_key(settings)}
     client = OpenAI(**client_kwargs)
     response = client.responses.create(
         model=settings.selected_model(use_fast=use_fast),
@@ -337,9 +337,7 @@ def _extract_openai(prompt: str, settings: _LLMSettings, *, use_fast: bool) -> s
 def _extract_deepseek(prompt: str, settings: _LLMSettings, *, use_fast: bool) -> str:
     from openai import OpenAI
 
-    client_kwargs: dict[str, Any] = {}
-    if settings.api_key:
-        client_kwargs["api_key"] = settings.api_key
+    client_kwargs: dict[str, Any] = {"api_key": _require_api_key(settings)}
     if settings.base_url:
         client_kwargs["base_url"] = settings.base_url
 
@@ -370,7 +368,7 @@ def _extract_deepseek(prompt: str, settings: _LLMSettings, *, use_fast: bool) ->
 def _extract_anthropic(prompt: str, settings: _LLMSettings, *, use_fast: bool) -> str:
     from anthropic import Anthropic
 
-    client_kwargs: dict[str, Any] = {"api_key": settings.api_key} if settings.api_key else {}
+    client_kwargs: dict[str, Any] = {"api_key": _require_api_key(settings)}
     client = Anthropic(**client_kwargs)
     message = client.messages.create(
         model=settings.selected_model(use_fast=use_fast),
@@ -392,6 +390,12 @@ def _default_openai_settings() -> _LLMSettings:
         or DEFAULT_OPENAI_FAST_MODEL,
         base_url=None,
     )
+
+
+def _require_api_key(settings: _LLMSettings) -> str:
+    if not settings.api_key or not settings.api_key.strip():
+        raise LLMError(f"Configured {settings.provider} API key is not set")
+    return settings.api_key
 
 
 def _default_anthropic_settings() -> _LLMSettings:
