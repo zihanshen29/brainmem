@@ -17,7 +17,7 @@ mem entity merge <a> <b>       # 合并实体
 mem capture [<kind>]           # 快速记录入口
 
 # Phase 2 (新增)
-mem ask <query>                # 默认变成 hybrid retrieval
+mem ask <query>                # 默认 keyword-only；显式 hybrid/semantic 可调用 embedding
 mem inject --query <query>     # 生成 token-bounded prompt context
 mem scratch append             # 追加本地 working buffer
 mem snapshot rebuild           # 从 scratch 重建当前状态快照
@@ -27,7 +27,7 @@ mem import <path>              # bulk import
 mem cost-estimate <path>       # 估算 import 成本
 ```
 
-## (P2) `mem ask` (改动: 默认使用 hybrid)
+## `mem ask`（默认 keyword-only）
 
 ```
 mem ask "<query>" [--mode hybrid|keyword-only|semantic|sql] [--top N] [--type <type>]
@@ -37,12 +37,12 @@ mem ask "<query>" [--mode hybrid|keyword-only|semantic|sql] [--top N] [--type <t
 ### 行为变化
 
 - **Phase 1 默认**: 关键词 + SQL + backlink 加权
-- **Phase 2 默认**: vector + keyword + SQL → RRF 融合
+- **显式 hybrid 模式**: vector + keyword + SQL → RRF 融合
 
 ### 选项
 
-- `--mode hybrid` (默认) — 三路 RRF 融合
-- `--mode keyword-only` — Phase 1 行为，仅 keyword + SQL backlink
+- `--mode hybrid` — 三路 RRF 融合；会把查询发给 embedding 服务
+- `--mode keyword-only`（默认）— 本地 keyword + SQL backlink
 - `--mode semantic` — 仅 vector path
 - `--mode sql` — 强制使用 SQL 短路（结构化查询）
 - `--top N` — 返回前 N 条，默认 5

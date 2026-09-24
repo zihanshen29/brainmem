@@ -34,6 +34,7 @@ def propose_tier(
         """,
         (entity_id, int(target_tier), row["tier"], reason, _now_iso(), review_file),
     )
+    assert cursor.lastrowid is not None
     return int(cursor.lastrowid)
 
 

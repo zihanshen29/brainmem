@@ -10,7 +10,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import frontmatter
 import ulid
@@ -18,12 +18,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from brain.concurrency import coordinated
 from brain.config import load_config
-from brain.db.connection import connect, sqlite_uri
+from brain.db.connection import connect, connect_readonly
 from brain.exceptions import BrainError
 from brain.import_.cost import cost_estimate
+from brain.import_.discovery import DiscoveredFile
 from brain.ledger import append_event
 from brain.models import Event, EventKind
-from brain.models.import_job import CostEstimate
+from brain.models.import_job import CostEstimate, ImportFileKind
 from brain.paths import BrainPaths
 
 DEFAULT_KINDS = {"md", "txt", "pdf", "jsonl"}
@@ -58,12 +59,7 @@ class ImportReport(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
-@dataclass(frozen=True)
-class _DiscoveredFile:
-    path: Path
-    relative_path: str
-    kind: str
-    file_hash: str
+class _DiscoveredFile(DiscoveredFile):
     size: int
 
 
@@ -337,8 +333,8 @@ def _discover_files(source: Path, kinds: set[str]) -> list[_DiscoveredFile]:
         return _fallback_discover_files(source, kinds)
 
     discovered = []
-    for item in discover_files(source, kinds):
-        path = Path(getattr(item, "path", getattr(item, "file_path", item)))
+    for item in discover_files(source, cast(set[ImportFileKind], kinds)):
+        path = item.path
         kind = str(getattr(item, "kind", SUPPORTED_SUFFIXES.get(path.suffix.lower(), "")))
         if kind not in kinds:
             continue
@@ -614,7 +610,7 @@ def _mark_file_failed(
     conn: sqlite3.Connection,
     job_id: str,
     file: _DiscoveredFile,
-    exc: Exception,
+    exc: BaseException,
 ) -> None:
     conn.execute(
         """
@@ -785,7 +781,7 @@ def _write_lf(path: Path, text: str) -> None:
 
 
 def _readonly_connection(path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(sqlite_uri(path, mode="ro"), uri=True)
+    conn = connect_readonly(path)
     conn.row_factory = sqlite3.Row
     return conn
 

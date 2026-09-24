@@ -111,7 +111,7 @@ Query BrainMem when:
 - A task would materially benefit from durable context that is unlikely to be in
   the current repository or conversation.
 
-Prefer local-only retrieval first. Use hybrid/default `mem ask` only when the
+Prefer local-only retrieval first. Use explicit hybrid `mem ask` only when the
 user has allowed provider-backed retrieval or when the content is not sensitive
 and permission is clear from the request.
 
@@ -149,16 +149,16 @@ Local-only commands:
 
 Provider-backed commands that need clear permission for sensitive content:
 
-- default hybrid `mem ask "query"`
+- explicit hybrid `mem ask "query" --mode hybrid`
 - semantic `mem ask`
 - `mem ask "query" --explain`
 - `mem ingest`
 - `mem reindex`
 - `mem promote-chat`
-- review apply rewrites or other flows that rewrite compiled truth with model
-  help
+- `mem summarize SLUG --provider` (local drafts and review application do not call models)
 
-Before provider-backed commands, hydrate API keys from the user's environment.
+Before provider-backed commands, hydrate only missing API keys from the user's environment.
+Do not overwrite nonempty process values.
 Never print, store, or commit API keys.
 
 HTTP/SSE MCP transport changes only the request transport. It does not change

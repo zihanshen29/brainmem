@@ -1,0 +1,136 @@
+# Safe maintenance and privacy
+
+`brain.db` is primary data. Accepted facts, review history, cursors and import
+state cannot be reconstructed from the current event ledger. Keep it in a
+verified complete backup alongside Markdown and raw sources.
+
+## Backups and reconciliation
+
+Use paths outside the data root for backups and dry-run output:
+
+```sh
+mem backup /backups/brain-before.zip --brain-root "${BRAIN_ROOT}"
+mem restore /backups/brain-before.zip --verify
+mem restore /backups/brain-before.zip --destination /new/restore-test
+mem reconcile --brain-root "${BRAIN_ROOT}" --output /backups/reconcile.json
+```
+
+Backups include ignored files, raw sources and Git history. SQLite is snapshotted
+consistently; transient SHM, locks and unfinished transaction journals are not
+restored. Each archive has a SHA-256 manifest, database integrity/foreign-key
+checks and ledger validation. Restore refuses an existing destination. Archives
+are local and unencrypted: choose an encrypted off-device destination separately.
+Store the returned archive hash separately if tamper detection is required.
+
+After explicit user approval, apply the exact reviewed plan with a fresh backup:
+
+```sh
+mem reconcile --brain-root "${BRAIN_ROOT}" --apply \
+  --plan /backups/reconcile.json --backup /backups/brain-before.zip
+```
+
+Application refuses changed inputs, stale backups and ambiguous page/alias
+identities. It registers non-procedure pages, repairs authoritative page fields,
+adds missing aliases and repairs uniquely located archived source references.
+It does not delete entities, normalize historical predicates, merge semantic
+lookalikes, clean archives, approve reviews or rewrite existing summaries.
+Those proposals are listed separately for human decisions.
+
+`rebuild --db` now starts from a healthy database snapshot and preserves primary
+records. A missing or corrupt database requires restoration. `lint --all` is
+read-only and reports registry/source drift as well as contradictions; it no
+longer creates review noise or Git commits.
+
+## Summary ownership and review
+
+Accepted entity-specific facts produce a short local evidence summary for new
+or untouched generated pages. `summary_hash` records the generated text.
+Any edited summary, legacy non-placeholder summary, or `curated: true` page is
+protected from automatic replacement. Tier approval changes importance only.
+
+```sh
+mem summarize project-slug --brain-root "${BRAIN_ROOT}"
+# Only with permission to send allowed evidence to the configured model:
+mem summarize project-slug --brain-root "${BRAIN_ROOT}" --provider
+```
+
+Both commands create a `summary_refresh` review with a diff. Approval verifies
+the entire original page hash and refuses stale drafts. `rebuild --pages SLUG
+--force` is a compatibility shortcut for a local summary draft. Approval,
+rejection and application of reviews still need explicit user instruction.
+`defer` leaves the file pending, records the deferral and clears its checkbox.
+Rejected tier proposals require meaningful mention growth before reappearing.
+
+## Content-level provider boundaries
+
+Mark a note header or page frontmatter with `privacy: local-only`. Capture and
+MCP wrappers preserve nested labels; a restrictive label cannot be relaxed by
+another wrapper. Optional directory rules use root-relative glob patterns:
+
+```toml
+[privacy]
+default = "provider-allowed"
+local_only_paths = ["raw/private/**", "laundry/private/**", "pages/private/**"]
+
+[ingest]
+confidence_auto_accept = 0.85
+confidence_auto_reject = 0.50
+chunk_max_chars = 4000
+output_language = "source"
+
+[llm]
+max_output_tokens = 4096
+```
+
+`default = "local-only"` disables provider use for the entire root. Local-only
+notes stay pending; they can still be searched locally. Page eligibility also
+checks its local/event sources. Ingest, reindex, explanation and summary/chat
+generation enforce these checks. Capture refuses likely credentials. Detection
+is a safeguard, not a guarantee that all sensitive text can be recognized.
+
+CLI and MCP default to keyword-only recall. An explicit existing retrieval
+configuration is preserved. `--mode hybrid`, `--mode semantic`, `--explain`,
+ingest, reindex and provider summary/chat generation may send permitted content
+externally. Permission labels do not replace user consent. Local retrieval and
+MCP responses can contain local-only text; an agent receiving it must not send
+it to another external service without permission.
+
+## Concurrent processes and interrupted writes
+
+All local clients resolve the same root: explicit argument, `BRAIN_ROOT`, a
+current directory containing both `config.toml` and `brain.db`, user config
+`~/.config/brainmem/config.toml`, then `~/brain`. HTTP MCP still fixes the root
+server-side.
+
+The default lock directory is `.brainmem-locks` beside the canonical root,
+independent of Windows identity and TEMP. It inherits parent permissions. If
+`BRAINMEM_LOCK_DIR` is set, every client must use the same shared directory.
+Restart CLI wrappers/MCP/Claude Code sessions after upgrading so all processes
+load the same lock protocol. Read operations create no SQLite runtime files in
+the data root; a live WAL is read from a private temporary snapshot.
+
+Ingest and reindex serialize their own slow workflows but release the root lock
+during provider calls. Application rechecks source/configuration hashes and
+privacy. Completed note extractions are cached locally to survive later batch
+failures. Truncated outputs split into smaller inputs; identical truncated
+requests are not retried. A note's SQLite changes, pages, reviews, ledger and
+archive move have a recoverable transaction journal and commit marker.
+
+After a killed ingest/reconcile operation, readers fail explicitly until a
+writer or `mem recover --brain-root "${BRAIN_ROOT}"` recovers the journal.
+Recovery preserves unrelated files and refuses to overwrite intervening manual
+edits. Other commands still use root locks but do not all have cross-file crash
+recovery. Locks cover cooperating processes on one machine; direct editors,
+old clients, network filesystems and power/storage failures require backups.
+
+Git auto-commits omit `brain.db` by default (`[git] track_database = false`) and
+refuse unrelated staged files. Existing tracked database history is retained;
+untracking it or rewriting history is a separate user decision. Git snapshots
+do not replace full database/raw-source backups.
+
+## Offline verification
+
+Run `pytest -p no:cacheprovider`, `ruff check src tests`, and `mypy src`.
+Tests use disposable roots, isolated lock directories, mocked providers and a
+socket guard that also reaches Python subprocesses. Loopback is reserved for
+local MCP tests and asyncio IPC; no live provider requests are permitted.

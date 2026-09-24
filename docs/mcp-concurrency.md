@@ -105,17 +105,20 @@ configuration backups and benchmark reports remain outside the source repository
   at most ten seconds for an execution slot. Root-lock acquisition has a separate ten
   second budget. HTTP overload uses `error.code = busy`; stdio reports a tool error.
 - A cancelled running Python function retains its slot and root lock until it exits.
-  Orderly service shutdown drains admitted work. A forced process kill does not provide
-  cross-file transaction recovery.
+  Orderly service shutdown drains admitted work. Ingest/reconcile now have a durable
+  cross-file recovery journal; other mutation flows still require backup-based recovery
+  after a forced kill.
 - All cooperating processes on one machine must use the same lock directory (default:
-  the user's temporary directory under `brainmem-locks`; override: `BRAINMEM_LOCK_DIR`).
+  `.brainmem-locks` beside the canonical data root; override: `BRAINMEM_LOCK_DIR`).
+  Restart all existing clients after upgrading; old processes keep the old protocol.
   These locks do not coordinate another machine or programs editing files directly.
-- Root locks cover complete operations. Long imports, provider calls inside mutation
-  pipelines, or review editor sessions can make queries return busy. This preserves
-  consistency between Markdown, events, Git and SQLite; shortening these write windows
-  requires a separate transaction design.
-- Read operations preserve canonical data. SQLite may create or update its own WAL/SHM
-  runtime files; these are not manually removed and are not immutable database snapshots.
+- Ingest and reindex stage provider work outside the root lock, then revalidate
+  inputs/privacy and apply under a short writer lock. Separate operation locks serialize
+  competing ingesters/reindexers. Other long mutation workflows can still return busy.
+- Read operations do not create or update source WAL/SHM files. A nonempty live WAL
+  is copied with the database to a private read snapshot under the shared lock;
+  immutable reads are used only without a nonempty WAL. Uncoordinated edits require
+  retry instead of automatic overwrite.
 - Existing MCP sessions retain already-imported code. Fresh sessions load the configured
   implementation. An incompatible live CodeGraph daemon is reported explicitly instead
   of being killed or replaced by a second watcher.

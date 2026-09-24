@@ -2,6 +2,8 @@
 
 本文件定义系统实现使用的数据结构、字段名和类型。Phase 2 的新增内容用 **(P2)** 标注。
 
+维护修订：实体类型增加 `unknown`。页面可标记 `privacy: local-only`、`curated: true`、`summary_hash` 和明确的 `entity_type`。`operation_commits` 保存可恢复写入的提交标记；`.brainmem/transactions` 保存短期恢复日志，`.brainmem/extractions` 保存本地抽取缓存。数据库中的事实、游标、层级历史等是主数据；恢复和隐私规则见 [maintenance.md](maintenance.md)。
+
 ## 1. 目录布局
 
 ```

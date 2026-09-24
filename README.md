@@ -65,7 +65,7 @@ It is not trying to be a multi-user SaaS memory backend, a hosted chatbot platfo
 | CLI workflow | `init`, `capture`, `ingest`, `reindex`, `import`, `cost-estimate`, `ask`, `inject`, `scratch`, `snapshot`, `procedure`, `review`, `lint`, `rebuild`, `status`, `promote-chat`, `entity` |
 | MCP access | stdio by default, with optional HTTP/SSE transport for trusted remote MCP clients |
 | LLM support | DeepSeek V4 by default for LLM work; OpenAI or OpenAI-compatible embeddings; Anthropic remains configurable |
-| Privacy boundary | Keyword-only `mem ask` is local; default hybrid `mem ask` embeds the query through the embedding provider; `mem reindex` calls the embedding provider; `mem ingest` and `mem ask --explain` can call the configured LLM |
+| Privacy boundary | Default `mem ask` is keyword-only and local; explicit hybrid/semantic modes embed the query; `mem reindex` calls the embedding provider; `mem ingest` and `mem ask --explain` can call the configured LLM |
 
 ## Quick Start
 
@@ -176,12 +176,11 @@ Local-only commands:
 Commands that may send content to the configured LLM or embedding provider:
 
 - `mem reindex`
-- `mem ask "query"` in the default hybrid mode, because the query is embedded
+- `mem ask "query" --mode hybrid` or `--mode semantic`, because the query is embedded
 - `mem ingest`
 - `mem ask --explain`
 - `mem promote-chat`
-- review apply actions that rewrite compiled truth
-- forced page rebuilds
+- `mem summarize SLUG --provider`; local drafts and review application do not call models
 
 ## Verification
 
@@ -192,7 +191,8 @@ The implemented Phase 2 build is checked with:
 .\.venv\Scripts\ruff.exe check .
 ```
 
-Latest local result: `438 passed`, `ruff` passed.
+The tests block external sockets, including in Python subprocesses. Run `mypy src`
+for type checking.
 
 ## Specs
 
@@ -200,6 +200,7 @@ The root `docs/` files are the current product and design documentation:
 
 - [SPEC.md](docs/SPEC.md)
 - [architecture.md](docs/architecture.md)
+- [maintenance.md](docs/maintenance.md) — backups, reconciliation, privacy and summary ownership
 - [data-model.md](docs/data-model.md)
 - [pipeline.md](docs/pipeline.md)
 - [cli.md](docs/cli.md)

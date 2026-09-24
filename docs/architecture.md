@@ -38,7 +38,7 @@
 
 ## L0 — Source of Truth (Phase 1, 未变)
 
-L0 是整个系统的"地基"，**不可变**。所有上层数据都可以从 L0 重建。结构、event 格式、laundry 归档逻辑保持 Phase 1 设计。
+L0 保存原始证据与追加式事件。当前账本没有保存完整事实，**不能从 L0 重建全部数据**。brain.db 中的事实、游标、层级历史和导入状态也是主数据，必须与 Markdown 和 raw 一起备份。`rebuild --db` 在完整数据库副本上刷新登记信息和派生索引，保留主数据；数据库缺失或损坏时要求恢复备份。
 
 Phase 2 调整：`mem import` 大批量导入素材时，会把它们先放进 `~/brain/laundry/import-<job-id>/` 子目录，便于追溯素材来源、查看 job 状态和做 cost estimate。手动 capture 的素材仍然直接放 laundry 根目录。
 
@@ -63,7 +63,7 @@ Phase 2 在同一个 `brain.db` 里**新增三张表**：
 
 详细 schema 见 `data-model.md`。
 
-**为什么不引入 Chroma**：Chroma 会增加一个进程、一份数据和一个备份目标。sqlite-vec 直接挂在 `brain.db` 上，备份就是复制一个文件，运行进程仍然只有 CLI。代价是功能较少（不支持 metadata filter 复杂查询、不支持内置 hybrid query），但 BrainMem 的 retrieval 路径采用项目内融合逻辑，不依赖 Chroma 的高级功能。
+**为什么不引入 Chroma**：Chroma 会增加一个进程、一份数据和一个备份目标。sqlite-vec 直接挂在 `brain.db` 上，一致性备份使用 SQLite backup API，不能直接复制活动数据库文件。代价是功能较少（不支持 metadata filter 复杂查询、不支持内置 hybrid query），但 BrainMem 的 retrieval 路径采用项目内融合逻辑，不依赖 Chroma 的高级功能。
 
 ## L3 — Retrieval (Phase 2 重写)
 
@@ -98,7 +98,7 @@ query
 
 ### `--mode keyword-only` fallback
 
-Phase 1 的纯关键词路径保留，作为 `mem ask --mode keyword-only` 触发，用于 hybrid retrieval 需要回退时。
+纯关键词路径是 CLI 和 MCP 的默认值；hybrid、semantic 和 explain 必须显式选择或配置。内容级隐私、摘要所有权与完整备份规则见 [maintenance.md](maintenance.md)。
 
 ### `--debug` 模式
 

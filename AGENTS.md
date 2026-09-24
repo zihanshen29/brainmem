@@ -9,9 +9,10 @@ this order:
 
 1. An explicit `--brain-root` flag or MCP `brain_root` argument.
 2. The `BRAIN_ROOT` environment variable.
-3. A local user config such as `~/.config/brainmem/config.toml` with
+3. The current directory, only when it contains both `config.toml` and `brain.db`.
+4. A local user config such as `~/.config/brainmem/config.toml` with
    `data_root`.
-4. Default: `~/brain`.
+5. Default: `~/brain`.
 
 For HTTP/SSE MCP remote mode, the server fixes `${BRAIN_ROOT}` at startup.
 Remote clients must not pass or override `brain_root`; the server-side value is
@@ -141,15 +142,16 @@ Local-only commands do not call an external model or embedding provider:
 Provider-backed commands require explicit user permission before use on
 sensitive or user-provided content:
 
-- default hybrid `mem ask "query"` because the query is embedded
+- explicit hybrid `mem ask "query" --mode hybrid` because the query is embedded
 - semantic `mem ask`
 - `mem ask "query" --explain`
 - `mem ingest`
 - `mem reindex`
 - `mem promote-chat`
-- review apply flows that rewrite compiled truth
+- `mem summarize SLUG --provider` (local drafts and review application do not call models)
 
-Before provider-backed commands, hydrate API keys from the user's environment.
+Before provider-backed commands, hydrate only missing API keys from the user's environment.
+Do not overwrite nonempty process values.
 Never print, store, or commit API keys.
 
 HTTP/SSE MCP transport changes only how a client reaches BrainMem. It does not
@@ -158,6 +160,13 @@ TLS for HTTP/SSE; use an outer private network, tunnel, or reverse proxy for
 transport encryption and access control.
 
 ## Review Queue Rule
+
+`brain.db` is primary data. Use `mem backup` and verify a restore before an approved
+migration. `mem reconcile` defaults to read-only and requires a reviewed plan and
+fresh complete backup for application. Do not use rebuild as disaster recovery.
+See [maintenance.md](docs/maintenance.md). Mark sensitive notes/pages with
+`privacy: local-only`; this blocks BrainMem provider calls but does not authorize
+an agent to forward local recall results externally.
 
 The review queue is human-controlled. Agents may list, inspect, or summarize
 pending review items when asked. Agents must not approve, reject, select a

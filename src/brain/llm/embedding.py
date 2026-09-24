@@ -65,7 +65,7 @@ class OpenAICompatibleEmbeddingClient:
     def _build_client(self, api_key: str | None) -> Any:
         from openai import OpenAI
 
-        client_kwargs: dict[str, str] = {}
+        client_kwargs: dict[str, Any] = {}
         resolved_api_key = api_key if api_key is not None else os.environ.get(self._config.api_key_env)
         if not resolved_api_key or not resolved_api_key.strip():
             raise EmbeddingError(

@@ -13,7 +13,7 @@ from brain.config import load_config
 from brain.db.connection import connect
 from brain.exceptions import BrainError, ConfigError, DBError
 from brain.ledger import append_event
-from brain.models import Event, EventKind, PageType
+from brain.models import Event, EventKind, Page, PageType
 from brain.pages import append_log, parse_page
 from brain.paths import BrainPaths
 from brain.pipeline._config import default_pipeline_config
@@ -126,8 +126,8 @@ def _unique_slugs(slugs: list[str]) -> list[str]:
     return unique
 
 
-def _load_prunable_pages(paths: BrainPaths, slugs: list[str]) -> dict[str, tuple[Path, object]]:
-    pages: dict[str, tuple[Path, object]] = {}
+def _load_prunable_pages(paths: BrainPaths, slugs: list[str]) -> dict[str, tuple[Path, Page]]:
+    pages: dict[str, tuple[Path, Page]] = {}
     for slug in slugs:
         candidates = sorted(paths.pages_dir.glob(f"**/{slug}.md"))
         if not candidates:

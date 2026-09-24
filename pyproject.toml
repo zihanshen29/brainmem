@@ -48,3 +48,7 @@ dev = [
     "ruff>=0.5.0",
     "mypy>=1.10.0",
 ]
+
+[tool.mypy]
+plugins = ["pydantic.mypy"]
+ignore_missing_imports = true

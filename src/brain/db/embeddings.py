@@ -49,6 +49,7 @@ def upsert_embedding(
         "INSERT INTO embeddings (embedding) VALUES (?)",
         (_serialize_vector(vector),),
     )
+    assert cursor.lastrowid is not None
     rowid = int(cursor.lastrowid)
     conn.execute(
         """
