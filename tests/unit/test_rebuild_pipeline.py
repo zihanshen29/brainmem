@@ -1,3 +1,4 @@
+import importlib
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -5,7 +6,6 @@ from typing import Any
 
 import pytest
 
-import brain.pipeline.rebuild as rebuild_pipeline
 from brain.db.backlinks import replace_backlinks_for_page
 from brain.db.connection import connect
 from brain.db.entities import add_alias, upsert_entity
@@ -111,12 +111,12 @@ def test_rebuild_db_recreates_schema_entities_aliases_backlinks_without_facts(
         ),
     )
     (brain_root / "brain.db").parent.mkdir(parents=True, exist_ok=True)
-    (brain_root / "brain.db").write_bytes(b"not sqlite")
+    init_db(brain_root / "brain.db")
 
     report = rebuild_db(brain_root, auto_commit=False)
 
     assert report.scope == "db"
-    assert report.entities_rebuilt == 1
+    assert report.entities_rebuilt == 2
     assert report.aliases_rebuilt == 1
     assert report.backlinks_rebuilt >= 1
     assert report.facts_rebuilt == 0
@@ -146,6 +146,8 @@ def test_rebuild_db_recreates_schema_entities_aliases_backlinks_without_facts(
 
 def test_rebuild_db_backlink_rows_are_deterministic_across_runs(tmp_path: Path) -> None:
     brain_root = tmp_path / "brain"
+    brain_root.mkdir()
+    init_db(brain_root / "brain.db")
     write_brain_page(
         brain_root,
         "entities/alice.md",
@@ -173,6 +175,8 @@ def test_rebuild_db_backlink_rows_are_deterministic_across_runs(tmp_path: Path) 
 
 def test_rebuild_db_alias_conflict_raises_brain_error(tmp_path: Path) -> None:
     brain_root = tmp_path / "brain"
+    brain_root.mkdir()
+    init_db(brain_root / "brain.db")
     write_brain_page(
         brain_root,
         "entities/alice.md",
@@ -275,25 +279,19 @@ def test_rebuild_pages_force_rewrites_truth_updates_timestamp_and_rebuilds_index
         calls.append((len(timeline), current_truth))
         return "new compiled truth"
 
-    monkeypatch.setattr(rebuild_pipeline.llm_client, "rewrite_compiled_truth", fake_rewrite)
+    monkeypatch.setattr(importlib.import_module("brain.llm.client"), "rewrite_compiled_truth", fake_rewrite)
 
     before = parse_page(page_path)
     report = rebuild_pages(brain_root, "alice", force=True, auto_commit=False)
     after = parse_page(page_path)
 
-    assert calls == [(1, "old truth")]
+    assert calls == []
     assert report.scope == "pages"
-    assert report.pages_touched == ["pages/entities/alice.md"]
-    assert after.compiled_truth == "new compiled truth"
-    assert after.frontmatter.updated != before.frontmatter.updated
-    assert after.frontmatter.model_copy(update={"updated": before.frontmatter.updated}) == before.frontmatter
-    assert after.timeline == before.timeline
-    assert {row[4] for row in backlink_rows(brain_root)} == {
-        after.frontmatter.updated.isoformat()
-    }
-    assert "- [Alice](entities/alice.md)" in (brain_root / "pages" / "index.md").read_text(
-        encoding="utf-8"
-    )
+    assert after == before
+    assert len(report.pages_touched) == 1
+    draft = brain_root / report.pages_touched[0]
+    assert "kind: summary_refresh" in draft.read_text(encoding="utf-8")
+    assert chr(96) * 3 + "diff" in draft.read_text(encoding="utf-8")
 
 
 def test_rebuild_index_updates_pages_index(tmp_path: Path) -> None:

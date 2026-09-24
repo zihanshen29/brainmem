@@ -13,13 +13,11 @@ from brain.concurrency import coordinated
 from brain.config import load_config
 from brain.db.backlinks import replace_backlinks_for_page
 from brain.db.connection import connect
-from brain.db.entities import add_alias, upsert_entity
+from brain.db.entities import add_alias, get_entity, lookup_by_alias, upsert_entity
 from brain.db.migrations import init_db
 from brain.exceptions import BrainError, ConfigError
-from brain.llm import client as llm_client
 from brain.models import Entity, EntityAliasSource, EntityType, Page, PageType, Tier
-from brain.pages import parse_page, regenerate_index, write_page
-from brain.pages.timeline import parse_entry
+from brain.pages import parse_page, regenerate_index
 from brain.paths import BrainPaths
 from brain.pipeline._config import default_pipeline_config
 from brain.pipeline.autolink import extract_backlinks
@@ -46,18 +44,28 @@ class RebuildReport(BaseModel):
 
 @coordinated(write=True)
 def rebuild_db(brain_root: Path, *, auto_commit: bool | None = None) -> RebuildReport:
-    """Rebuild brain.db from current markdown pages, then rebuild backlinks and index."""
+    """Refresh page-derived registry fields and indexes, preserving primary DB records."""
     paths = BrainPaths(Path(brain_root))
     report = RebuildReport(scope="db")
 
-    paths.db_path.parent.mkdir(parents=True, exist_ok=True)
+    if not paths.db_path.is_file():
+        raise BrainError("brain.db is primary data; restore a verified backup before rebuilding")
     pages = _collect_parseable_pages(paths, report)
     if report.errors:
         raise BrainError("Cannot rebuild database: " + "; ".join(report.errors))
-    entity_pages = [item for item in pages if item[1].frontmatter.type is PageType.ENTITY]
+    entity_pages = [item for item in pages if item[1].frontmatter.type is not PageType.PROCEDURE]
     previous_index = paths.pages_index.read_bytes() if paths.pages_index.exists() else None
     with TemporaryDirectory(prefix=".rebuild-", dir=paths.root) as directory:
         staged_db = Path(directory) / "brain.db"
+        with closing(connect(paths.db_path, read_only=True)) as source:
+            try:
+                healthy = source.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+            except sqlite3.DatabaseError as exc:
+                raise BrainError("Database is damaged; restore a verified backup") from exc
+            if not healthy:
+                raise BrainError("Database is damaged; restore a verified backup")
+            with closing(sqlite3.connect(staged_db)) as destination:
+                source.backup(destination)
         init_db(staged_db)
         with closing(connect(staged_db)) as conn:
             with conn:
@@ -99,42 +107,9 @@ def rebuild_pages(
     if not force:
         raise BrainError("rebuild_pages requires force=True")
 
-    paths = BrainPaths(Path(brain_root))
-    report = RebuildReport(scope="pages")
-    page_path, page = _resolve_unique_page(paths, slug)
-
-    timeline = [parse_entry(line) for line in page.timeline]
-    compiled_truth = llm_client.rewrite_compiled_truth(timeline, page.compiled_truth)
-    updated_page = page.model_copy(
-        update={
-            "frontmatter": page.frontmatter.model_copy(update={"updated": _now_utc()}),
-            "compiled_truth": compiled_truth,
-        }
-    )
-    write_page(page_path, updated_page)
-    report.pages_touched.append(page_path.relative_to(paths.root).as_posix())
-
-    conn = connect(paths.db_path)
-    try:
-        parsed_page = parse_page(page_path)
-        with conn:
-            report.backlinks_rebuilt = _replace_backlinks_for_pages(
-                conn,
-                [(page_path, parsed_page)],
-            )
-        regenerate_index(paths.root)
-        report.index_rebuilt = True
-    finally:
-        _finalize_db(conn, paths.db_path)
-        conn.close()
-
-    report.committed = _maybe_commit(
-        paths,
-        auto_commit,
-        f"rebuild: page {slug}",
-        [paths.db_path, paths.pages_index, page_path],
-    )
-    return _sorted_report(report)
+    from brain.pipeline.summaries import propose_summary
+    draft = propose_summary(Path(brain_root), slug, provider=False)
+    return RebuildReport(scope="pages", pages_touched=[draft["review_file"]])
 
 
 @coordinated(write=True)
@@ -245,15 +220,17 @@ def _rebuild_entities(
 
     for page_path, page in pages:
         frontmatter = page.frontmatter
+        existing = get_entity(conn, frontmatter.slug)
         entity = Entity(
             id=frontmatter.slug,
-            type=_entity_type_from_tags(frontmatter.tags),
+            type=page_entity_type(page, existing),
             title=frontmatter.title,
             page_path=page_path.relative_to(paths.root).as_posix(),
-            tier=frontmatter.tier or Tier.TIER_3,
-            mention_count=0,
-            first_seen=frontmatter.created,
-            last_seen=frontmatter.updated,
+            tier=frontmatter.tier or (existing.tier if existing else Tier.TIER_3),
+            mention_count=existing.mention_count if existing else 0,
+            first_seen=existing.first_seen if existing else frontmatter.created,
+            last_seen=existing.last_seen if existing else frontmatter.updated,
+            metadata=existing.metadata if existing else {},
         )
         upsert_entity(conn, entity)
         report.entities_rebuilt += 1
@@ -266,15 +243,31 @@ def _rebuild_entities(
             alias_rows.add((alias, entity.id))
 
     for alias, entity_id in sorted(alias_rows):
+        owner = lookup_by_alias(conn, alias)
+        if owner == entity_id:
+            continue
+        if owner is not None:
+            raise BrainError(f"Alias {alias!r} already belongs to {owner}")
         add_alias(conn, alias, entity_id, EntityAliasSource.FRONTMATTER)
         report.aliases_rebuilt += 1
+
+
+def page_entity_type(page: Page, existing: Entity | None = None) -> EntityType:
+    if page.frontmatter.entity_type:
+        return EntityType(page.frontmatter.entity_type)
+    mapping = {PageType.PROJECT: EntityType.PROJECT, PageType.CONCEPT: EntityType.CONCEPT,
+               PageType.EVENT: EntityType.EVENT}
+    if page.frontmatter.type in mapping:
+        return mapping[page.frontmatter.type]
+    explicit = _entity_type_from_tags(page.frontmatter.tags)
+    return explicit if explicit is not EntityType.UNKNOWN else (existing.type if existing else explicit)
 
 
 def _entity_type_from_tags(tags: list[str]) -> EntityType:
     for value in ("person", "org", "concept", "project", "event", "place"):
         if value in tags:
             return EntityType(value)
-    return EntityType.CONCEPT
+    return EntityType.UNKNOWN
 
 
 def _replace_all_backlinks(conn: sqlite3.Connection, pages: list[tuple[Path, Page]]) -> int:
@@ -305,7 +298,6 @@ def _replace_backlinks_for_pages(
         ]
         replace_backlinks_for_page(conn, page.frontmatter.slug, links)
         rebuilt += len(links)
-    _update_mention_counts(conn)
     return rebuilt
 
 
@@ -356,26 +348,14 @@ def _resolve_unique_page(paths: BrainPaths, slug: str) -> tuple[Path, Page]:
 
 def _publish_rebuilt_db(staged_db: Path, db_path: Path) -> None:
     """Let SQLite replace a healthy destination transactionally, honoring its locks."""
-    corrupt = False
-    with closing(sqlite3.connect(db_path)) as destination:
-        try:
-            destination.execute("PRAGMA user_version").fetchone()
-        except sqlite3.DatabaseError as exc:
-            if getattr(exc, "sqlite_errorcode", None) != sqlite3.SQLITE_NOTADB:
-                raise
-            corrupt = True
-        if not corrupt:
-            def check_busy(status: int, remaining: int, total: int) -> None:
-                if status in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
-                    raise BrainError("Database is busy; stop other writers before rebuilding")
+    def check_busy(status: int, remaining: int, total: int) -> None:
+        if status in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
+            raise BrainError("Database is busy; stop other writers before rebuilding")
 
-            with closing(sqlite3.connect(staged_db)) as source:
-                source.backup(destination, pages=128, progress=check_busy)
-    if corrupt:
-        # A non-SQLite file cannot be a backup destination. Never discard live WAL data.
-        if any(db_path.with_name(db_path.name + suffix).exists() for suffix in ("-wal", "-shm")):
-            raise BrainError("Corrupt database has SQLite sidecars; recover them before rebuilding")
-        staged_db.replace(db_path)
+    with closing(sqlite3.connect(db_path)) as destination:
+        destination.execute("PRAGMA user_version").fetchone()
+        with closing(sqlite3.connect(staged_db)) as source:
+            source.backup(destination, pages=128, progress=check_busy)
 
 
 def _finalize_db(conn: sqlite3.Connection, db_path: Path) -> None:

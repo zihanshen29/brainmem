@@ -17,7 +17,6 @@ from brain.concurrency import coordinated
 from brain.config import load_config
 from brain.db.connection import connect
 from brain.exceptions import BrainError
-from brain.git_ops import commit
 from brain.models import Tier
 from brain.pages import parse_page
 from brain.paths import BrainPaths
@@ -30,6 +29,7 @@ class LintKind(StrEnum):
     STALE = "stale"
     ORPHANS = "orphans"
     CITATIONS = "citations"
+    REGISTRY = "registry"
 
 
 class LintIssue(BaseModel):
@@ -58,6 +58,7 @@ class LintRunReport(BaseModel):
     review_files: list[str] = Field(default_factory=list)
     lint_results: list[int] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+    issues: list[LintIssue] = Field(default_factory=list)
 
 
 WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]+)?\]\]")
@@ -71,48 +72,23 @@ REVIEW_DECISION_SECTION = """## Decision
 
 def lint_contradictions(conn: sqlite3.Connection) -> list[LintIssue]:
     """Find active facts with the same subject/predicate but different objects."""
-    rows = conn.execute(
-        """
-        SELECT subject, predicate, COUNT(DISTINCT object) AS object_count
-        FROM facts
-        WHERE superseded_by IS NULL
-          AND valid_to IS NULL
-        GROUP BY subject, predicate
-        HAVING object_count > 1
-        ORDER BY subject, predicate
-        """
-    ).fetchall()
+    from brain.predicates import is_single_valued, normalize_predicate
 
+    groups: dict[tuple[str, str], list[sqlite3.Row]] = {}
+    for row in conn.execute("SELECT * FROM facts WHERE superseded_by IS NULL AND valid_to IS NULL ORDER BY id"):
+        predicate = normalize_predicate(row["predicate"])
+        if is_single_valued(predicate):
+            groups.setdefault((row["subject"], predicate), []).append(row)
     issues: list[LintIssue] = []
-    for row in rows:
-        fact_rows = conn.execute(
-            """
-            SELECT id, object, object_type, valid_from, source_event, source_ref, confidence
-            FROM facts
-            WHERE subject = ?
-              AND predicate = ?
-              AND superseded_by IS NULL
-              AND valid_to IS NULL
-            ORDER BY object, id
-            """,
-            (row["subject"], row["predicate"]),
-        ).fetchall()
-        objects = sorted({str(fact["object"]) for fact in fact_rows})
-        issues.append(
-            LintIssue(
+    for (subject, predicate), facts in sorted(groups.items()):
+        objects = sorted({row["object"] for row in facts})
+        if len(objects) > 1:
+            issues.append(LintIssue(
                 kind=LintKind.CONTRADICTIONS,
-                message=(
-                    f"Active facts disagree for "
-                    f"{row['subject']} / {row['predicate']}: {', '.join(objects)}"
-                ),
-                subject=str(row["subject"]),
-                predicate=str(row["predicate"]),
-                details={
-                    "objects": objects,
-                    "facts": [_row_dict(fact) for fact in fact_rows],
-                },
-            )
-        )
+                message=f"Active facts disagree for {subject} / {predicate}: {', '.join(objects)}",
+                subject=subject, predicate=predicate,
+                details={"objects": objects, "facts": [_row_dict(row) for row in facts]},
+            ))
     return issues
 
 
@@ -208,46 +184,31 @@ def lint_citations(paths: BrainPaths) -> list[LintIssue]:
     return issues
 
 
-@coordinated(write=True)
+@coordinated()
 def run_lint(
     brain_root: Path,
     kinds: Iterable[str | LintKind],
     stale_days: int | None = None,
 ) -> LintRunReport:
-    """Run selected lint checks, record lint_results, and create review files."""
+    """Read-only diagnostics: no review decisions, database writes, or commits."""
     paths = BrainPaths(Path(brain_root))
     config = load_config(paths.config_path)
     requested = list(kinds)
     selected = _normalize_kinds(requested)
-    requested_all = _is_all_request(requested)
     effective_stale_days = stale_days if stale_days is not None else config.lint.stale_days
     if effective_stale_days < 1:
         raise BrainError("stale_days must be positive")
 
     report = LintRunReport(kinds=selected)
-    conn = connect(paths.db_path)
+    conn = connect(paths.db_path, read_only=True)
     try:
         for kind in selected:
             issues = _run_one_kind(conn, paths, kind, effective_stale_days)
-            review_file = _write_review(paths, kind, issues) if issues else ""
-            result_id = _insert_lint_result(conn, kind, len(issues), review_file)
-            conn.commit()
-
             report.issue_count += len(issues)
             report.issues_by_kind[kind] = len(issues)
-            report.lint_results.append(result_id)
-            if review_file:
-                report.review_files.append(review_file)
+            report.issues.extend(issues)
     finally:
-        _checkpoint_and_close(conn)
-
-    if config.git.auto_commit and (report.lint_results or report.review_files):
-        commit_label = "all" if requested_all else selected[0].value
-        commit(
-            paths.root,
-            f"lint: {commit_label}, {report.issue_count} issues found",
-            paths=_commit_paths(paths),
-        )
+        conn.close()
     return report
 
 
@@ -265,6 +226,16 @@ def _run_one_kind(
         return lint_orphans(conn, paths)
     if kind is LintKind.CITATIONS:
         return lint_citations(paths)
+    if kind is LintKind.REGISTRY:
+        from brain.pipeline.reconcile import _plan
+        plan = _plan(paths.root, conn)
+        issues = []
+        for name in ("registry", "sources", "missing_pages", "alias_conflicts", "errors"):
+            for item in plan[name]:
+                issues.append(LintIssue(kind=kind, message=f"{name}: {item}", details=item))
+        if plan["summary_candidates"]:
+            issues.append(LintIssue(kind=kind, message=f"{len(plan['summary_candidates'])} pages have placeholder summaries"))
+        return issues
     raise BrainError(f"Unsupported lint kind: {kind}")
 
 
@@ -340,6 +311,7 @@ def _insert_lint_result(
         """,
         (_now_utc().isoformat(), kind.value, issue_count, report_file),
     )
+    assert cursor.lastrowid is not None
     return int(cursor.lastrowid)
 
 
@@ -396,7 +368,7 @@ def _next_review_seq(review_dir: Path, day: str) -> int:
     if not review_dir.exists():
         return 1
     max_seq = 0
-    for path in review_dir.glob(f"{day}_*_*.md"):
+    for path in review_dir.rglob(f"{day}_*_*.md"):
         parts = path.stem.split("_", maxsplit=2)
         if len(parts) < 3:
             continue

@@ -154,7 +154,7 @@ def test_run_lint_no_issue_records_result_without_review(tmp_path: Path) -> None
     rows = _rows(root, "SELECT kind, issue_count, report_file FROM lint_results")
     assert report.issue_count == 0
     assert report.review_files == []
-    assert rows == [("citations", 0, "")]
+    assert rows == []
     assert list((root / "review").glob("*.md")) == []
 
 

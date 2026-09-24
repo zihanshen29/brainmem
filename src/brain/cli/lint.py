@@ -6,8 +6,9 @@ from typing import Annotated, Any
 import typer
 
 from brain.exceptions import BrainError
+from brain.paths import resolve_brain_root
 
-LINT_KINDS = ("contradictions", "stale", "orphans", "citations")
+LINT_KINDS = ("contradictions", "stale", "orphans", "citations", "registry")
 
 
 def lint_command(
@@ -57,7 +58,7 @@ def lint_command(
         raise typer.Exit(1)
 
     try:
-        report = _run_lint(Path.cwd() if brain_root is None else brain_root, kinds, stale_days=days)
+        report = _run_lint(resolve_brain_root(brain_root), kinds, stale_days=days)
     except BrainError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -76,6 +77,8 @@ def lint_command(
             typer.echo(f"- {path}")
 
     typer.echo(f"Total issues: {total}")
+    for issue in getattr(report, "issues", []):
+        typer.echo(f"- {issue.message}")
 
 
 def _run_lint(root: Path, kinds: list[str], *, stale_days: int | None = None) -> Any:

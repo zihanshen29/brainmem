@@ -14,6 +14,13 @@ from brain.cli.ingest import ingest_command
 from brain.cli.init import init_brain
 from brain.cli.inject import inject_command
 from brain.cli.lint import lint_command
+from brain.cli.maintenance import (
+    backup_command,
+    reconcile_command,
+    recover_command,
+    restore_command,
+    summarize_command,
+)
 from brain.cli.procedure import procedure_app
 from brain.cli.promote_chat import promote_chat_command
 from brain.cli.rebuild import rebuild_command
@@ -37,6 +44,11 @@ app.command("rebuild")(rebuild_command)
 app.command("reindex")(reindex_command)
 app.command("review")(review_command)
 app.command("status")(status_command)
+app.command("backup")(backup_command)
+app.command("restore")(restore_command)
+app.command("reconcile")(reconcile_command)
+app.command("summarize")(summarize_command)
+app.command("recover")(recover_command)
 app.add_typer(entity_app, name="entity")
 app.add_typer(codex_app, name="codex")
 app.add_typer(procedure_app, name="procedure")

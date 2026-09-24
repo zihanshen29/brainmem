@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -61,7 +62,7 @@ def test_cli_rebuild_db_recreates_queryable_entities_aliases_backlinks_and_summa
     )
     facts = _scalar(brain_root, "SELECT COUNT(*) FROM facts")
 
-    assert [tuple(row) for row in entities] == [("alice", "person", "Alice")]
+    assert [tuple(row) for row in entities] == [("alice", "person", "Alice"), ("brain-project", "project", "Brain Project")]
     assert [tuple(row) for row in aliases] == [("Al", "alice", "frontmatter")]
     assert ("brain-project", "alice", "mentions") in [tuple(row) for row in backlinks]
     assert ("brain-project", "alice", "works_with") in [tuple(row) for row in backlinks]
@@ -192,15 +193,16 @@ def test_cli_rebuild_pages_force_rewrites_compiled_truth_without_real_llm(
         calls.append((len(timeline), current_truth))
         return "updated compiled truth"
 
-    monkeypatch.setattr(rebuild_pipeline.llm_client, "rewrite_compiled_truth", fake_rewrite)
+    monkeypatch.setattr(importlib.import_module("brain.llm.client"), "rewrite_compiled_truth", fake_rewrite)
     monkeypatch.chdir(brain_root)
 
     result = runner.invoke(app, ["rebuild", "--pages", "alice", "--force", "--yes"])
 
     assert result.exit_code == 0
     _assert_summary_fields(result.stdout, "pages")
-    assert calls == [(1, "old truth")]
-    assert parse_page(page_path).compiled_truth == "updated compiled truth"
+    assert calls == []
+    assert parse_page(page_path).compiled_truth == "old truth"
+    assert len(list((brain_root / "review").glob("*summary_refresh.md"))) == 1
 
 
 @pytest.mark.parametrize(

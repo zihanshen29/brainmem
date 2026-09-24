@@ -6,6 +6,7 @@ from typing import Annotated, Any
 import typer
 
 from brain.exceptions import BrainError
+from brain.paths import resolve_brain_root
 
 
 def rebuild_command(
@@ -58,7 +59,7 @@ def rebuild_command(
         raise typer.Exit(1)
 
     try:
-        root = Path.cwd() if brain_root is None else brain_root
+        root = resolve_brain_root(brain_root)
         report = _run_rebuild(root, scope=scope, pages=pages, force=force)
     except BrainError as exc:
         typer.echo(f"Error: {exc}", err=True)

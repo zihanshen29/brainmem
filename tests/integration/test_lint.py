@@ -46,11 +46,12 @@ def test_cli_lint_all_runs_every_kind_and_prints_summary(
 
     monkeypatch.setattr(lint_cli, "_run_lint", fake_run_lint)
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BRAIN_ROOT", str(tmp_path))
 
     result = runner.invoke(app, ["lint", "--all"])
 
     assert result.exit_code == 0
-    assert calls == [(tmp_path, ["contradictions", "stale", "orphans", "citations"], None)]
+    assert calls == [(tmp_path, ["contradictions", "stale", "orphans", "citations", "registry"], None)]
     assert "Lint summary:" in result.stdout
     assert "- contradictions: 2 issues" in result.stdout
     assert "- stale: 1 issues" in result.stdout
@@ -84,6 +85,7 @@ def test_cli_lint_single_kind(
 
     monkeypatch.setattr(lint_cli, "_run_lint", fake_run_lint)
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BRAIN_ROOT", str(tmp_path))
 
     result = runner.invoke(app, ["lint", flag])
 
@@ -105,6 +107,7 @@ def test_cli_lint_stale_passes_days(
 
     monkeypatch.setattr(lint_cli, "_run_lint", fake_run_lint)
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BRAIN_ROOT", str(tmp_path))
 
     result = runner.invoke(app, ["lint", "--stale", "--days", "45"])
 
@@ -128,6 +131,7 @@ def test_cli_lint_accepts_brain_root_option(
 
     monkeypatch.setattr(lint_cli, "_run_lint", fake_run_lint)
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BRAIN_ROOT", str(tmp_path))
 
     result = runner.invoke(app, ["lint", "--brain-root", str(root), "--citations"])
 
@@ -144,6 +148,7 @@ def test_cli_lint_brain_error_outputs_stderr_and_exit_one(
 
     monkeypatch.setattr(lint_cli, "_run_lint", raise_brain_error)
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BRAIN_ROOT", str(tmp_path))
 
     result = runner.invoke(app, ["lint", "--citations"])
 
@@ -167,20 +172,9 @@ def test_cli_lint_all_writes_review_and_lint_results(
     assert "- contradictions: 1 issues" in result.stdout
     assert "Total issues: 1" in result.stdout
 
-    review_files = list((root / "review").glob("*.md"))
-    assert len(review_files) == 1
-    review_text = review_files[0].read_text(encoding="utf-8")
-    assert "kind: lint_finding" in review_text
-    assert "lint_kind: contradictions" in review_text
-    assert "## Decision" in review_text
-
-    rows = _rows(root, "SELECT kind, issue_count, report_file FROM lint_results ORDER BY kind")
-    assert rows == [
-        ("citations", 0, ""),
-        ("contradictions", 1, review_files[0].relative_to(root).as_posix()),
-        ("orphans", 0, ""),
-        ("stale", 0, ""),
-    ]
+    assert list((root / "review").glob("*.md")) == []
+    assert _rows(root, "SELECT kind, issue_count, report_file FROM lint_results") == []
+    assert "Active facts disagree" in result.stdout
 
 
 def _insert_fact(root: Path, *, object_value: str, source_event: str) -> None:

@@ -13,7 +13,7 @@ import frontmatter
 import brain.git_ops as git_ops
 from brain.concurrency import coordinated
 from brain.config import EmbeddingConfig, load_config
-from brain.db.connection import sqlite_uri
+from brain.db.connection import connect_readonly
 from brain.exceptions import BrainError
 from brain.models import PageType
 from brain.pages import parse_page
@@ -159,7 +159,7 @@ def _validate_brain_root(paths: BrainPaths) -> None:
 
 def _connect_readonly(path: Path) -> sqlite3.Connection:
     try:
-        conn = sqlite3.connect(sqlite_uri(path, mode="ro"), uri=True)
+        conn = connect_readonly(path)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
     except sqlite3.Error as exc:
@@ -184,7 +184,7 @@ def _iter_page_paths(paths: BrainPaths) -> list[Path]:
 
 
 def _page_chunk_hashes(paths: BrainPaths, config: EmbeddingConfig) -> dict[tuple[str, str, str], str]:
-    chunks = {}
+    chunks: dict[tuple[str, str, str], str] = {}
     for path in _iter_page_paths(paths):
         for chunk in split_page_into_chunks(parse_page(path), config.chunk_max_chars):
             chunks[(chunk.page_slug, chunk.chunk_kind, chunk.chunk_id)] = embedding_content_hash(
