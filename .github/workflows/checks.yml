@@ -10,7 +10,15 @@ jobs:
           python-version: '3.11'
       - run: python -m pip install -e '.[dev]'
       - run: ruff check src tests
-      - run: mypy src
+      - name: mypy
+        # Surface type errors as annotations so they are readable without the raw log.
+        run: |
+          python -m pip list --format=freeze | grep -iE '^(mypy|pydantic|typer|gitpython|portalocker|openai|anthropic|mcp)=='
+          if ! mypy src > mypy.txt 2>&1; then
+            cat mypy.txt
+            sed -nE 's/^([^:]+):([0-9]+): error: (.*)$/::error file=\1,line=\2::\3/p' mypy.txt
+            exit 1
+          fi
       - run: pytest -p no:cacheprovider
         env:
           PYTHONPATH: tests/offline
