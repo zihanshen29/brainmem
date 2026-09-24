@@ -75,9 +75,11 @@ def propose_summary(root: Path, slug: str, *, provider: bool = False) -> dict:
     with root_lock(root), closing(connect(root / "brain.db", read_only=True)) as conn:
         path, page = _resolve_unique_page(BrainPaths(root), slug)
         original_hash = hashlib.sha256(path.read_bytes()).hexdigest()
-        text = evidence_summary(
-            conn, page, load_config(root / "config.toml").ingest.output_language
+        config_path = root / "config.toml"
+        output_language = (
+            load_config(config_path).ingest.output_language if config_path.exists() else "source"
         )
+        text = evidence_summary(conn, page, output_language)
         if provider:
             require_external(root, path=path)
     if provider:
