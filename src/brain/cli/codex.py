@@ -80,13 +80,13 @@ def install_command(
         typer.Option("--source-skill", help="Override the repository canonical SKILL.md source."),
     ] = None,
     mem_command: Annotated[
-        str,
+        str | None,
         typer.Option("--mem-command", help="Executable or absolute path used by the hook."),
-    ] = "mem",
+    ] = None,
     mcp_command: Annotated[
-        str,
+        str | None,
         typer.Option("--mcp-command", help="Executable or absolute path used by stdio MCP."),
-    ] = "mem-mcp",
+    ] = None,
     replace_skill: Annotated[
         bool,
         typer.Option(
@@ -143,8 +143,8 @@ def status_command(
     codex_home: Annotated[Path | None, typer.Option("--codex-home")] = None,
     agents_home: Annotated[Path | None, typer.Option("--agents-home")] = None,
     source_skill: Annotated[Path | None, typer.Option("--source-skill")] = None,
-    mem_command: Annotated[str, typer.Option("--mem-command")] = "mem",
-    mcp_command: Annotated[str, typer.Option("--mcp-command")] = "mem-mcp",
+    mem_command: Annotated[str | None, typer.Option("--mem-command")] = None,
+    mcp_command: Annotated[str | None, typer.Option("--mcp-command")] = None,
     json_output: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
     """Show read-only Codex integration and drift status."""
@@ -172,8 +172,8 @@ def doctor_command(
     codex_home: Annotated[Path | None, typer.Option("--codex-home")] = None,
     agents_home: Annotated[Path | None, typer.Option("--agents-home")] = None,
     source_skill: Annotated[Path | None, typer.Option("--source-skill")] = None,
-    mem_command: Annotated[str, typer.Option("--mem-command")] = "mem",
-    mcp_command: Annotated[str, typer.Option("--mcp-command")] = "mem-mcp",
+    mem_command: Annotated[str | None, typer.Option("--mem-command")] = None,
+    mcp_command: Annotated[str | None, typer.Option("--mcp-command")] = None,
     json_output: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
     """Check whether proactive recall can run; exit nonzero on actionable drift."""
@@ -221,7 +221,7 @@ def hook_template_command(
         Path | None,
         typer.Option("--brain-root", help="Brain repository root."),
     ] = None,
-    mem_command: Annotated[str, typer.Option("--mem-command")] = "mem",
+    mem_command: Annotated[str | None, typer.Option("--mem-command")] = None,
 ) -> None:
     """Print a valid matcher-free UserPromptSubmit hooks.json template."""
     handler = desired_hook_handler(resolve_brain_root(brain_root), mem_command=mem_command)

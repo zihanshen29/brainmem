@@ -16,6 +16,14 @@ mem codex install --brain-root "${BRAIN_ROOT}" --yes
 mem codex doctor --brain-root "${BRAIN_ROOT}"
 ```
 
+The preview lists changed files and their before/after hashes. Default launchers
+use the `mem` executable adjacent to the current Python interpreter and that
+interpreter's `-m brain.mcp.server`, so MCP does not depend on `mem-mcp` being on
+PATH. Explicit `--mem-command` / `--mcp-command` overrides remain available.
+Every application first saves and verifies the original integration files under
+`~/.codex/brainmem/backups/<id>/`; the returned backup path contains a manifest
+mapping each saved file to its original path and SHA-256. Keep this backup private.
+
 After installation or a hook update, open `/hooks` in Codex and review/trust the
 exact command. Codex hashes non-managed hooks and skips new or changed hooks
 until the user trusts them.
@@ -24,10 +32,10 @@ until the user trusts them.
 
 | Artifact | Installation behavior |
 | --- | --- |
-| `~/.agents/skills/brain-memory/SKILL.md` | Copied from `skills/brainmem/SKILL.md`. A different, unowned file is not replaced unless `--replace-skill` is explicitly supplied. |
-| `~/.codex/AGENTS.md` | Adds or replaces only an HTML-comment-delimited BrainMem policy block. Other user instructions are preserved. |
+| `~/.agents/skills/brain-memory/SKILL.md` | Updates canonical guidance while preserving a proven description-only edit. Other local body edits require explicit merging or `--replace-skill`. |
+| `~/.codex/AGENTS.md` | Updates an owned HTML-comment-delimited policy block. Local edits inside it require explicit merging; instructions outside it are preserved. |
 | `~/.codex/hooks.json` | Adds one matcher-free `UserPromptSubmit` group. Other JSON keys, events, groups, and handlers are preserved semantically. |
-| `~/.codex/config.toml` | Adds or replaces only a comment-delimited `[mcp_servers.brainmem]` block. An existing unmarked server with that name is treated as a conflict, not overwritten. |
+| `~/.codex/config.toml` | Updates BrainMem launcher fields, preserving custom options and comments. Foreign tables inside the markers move outside them; the entire parsed configuration is checked for unintended changes. An unmarked BrainMem server remains a conflict. |
 | `~/.codex/brainmem/integration.json` | Records hashes and the owned hook handler for drift detection and safe removal. It contains no prompts, memory bodies, or credentials. |
 
 Codex uses `~/.agents/skills` as the canonical user skill location. If

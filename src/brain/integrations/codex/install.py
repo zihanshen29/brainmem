@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -9,9 +10,12 @@ import shutil
 import sys
 import tempfile
 import tomllib
+import uuid
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
+
+import tomli_w
 
 from brain.exceptions import BrainError
 from brain.integrations.codex.hook import (
@@ -92,14 +96,14 @@ def integration_paths(
 def desired_hook_handler(
     brain_root: Path,
     *,
-    mem_command: str = "mem",
+    mem_command: str | None = None,
     top: int = DEFAULT_TOP,
     budget: int = DEFAULT_BUDGET,
     max_query_chars: int = DEFAULT_MAX_QUERY_CHARS,
     context_limit: int = DEFAULT_CONTEXT_LIMIT,
 ) -> dict[str, Any]:
     args = [
-        mem_command,
+        _mem_command(mem_command),
         "codex",
         "hook",
         "--brain-root",
@@ -123,13 +127,25 @@ def desired_hook_handler(
     }
 
 
-def desired_mcp_block(brain_root: Path, *, mcp_command: str = "mem-mcp") -> str:
+def _mem_command(command: str | None) -> str:
+    if command is not None:
+        return command
+    adjacent = Path(sys.executable).with_name("mem.exe" if os.name == "nt" else "mem")
+    return str(adjacent) if adjacent.is_file() else (shutil.which("mem") or "mem")
+
+
+def _command_path(command: str) -> str | None:
+    return str(Path(command)) if Path(command).is_absolute() and Path(command).is_file() else shutil.which(command)
+
+
+def desired_mcp_block(brain_root: Path, *, mcp_command: str | None = None) -> str:
     root_text = json.dumps(brain_root.expanduser().resolve().as_posix(), ensure_ascii=False)
-    command_text = json.dumps(mcp_command, ensure_ascii=False)
+    command_text = json.dumps(mcp_command or sys.executable, ensure_ascii=False)
+    args_text = '\nargs = ' + json.dumps(["-m", "brain.mcp.server"] if mcp_command is None else [])
     tools_text = ", ".join(json.dumps(tool) for tool in MCP_TOOLS)
     return f"""{MCP_START}
 [mcp_servers.brainmem]
-command = {command_text}
+command = {command_text}{args_text}
 cwd = {root_text}
 enabled = true
 enabled_tools = [{tools_text}]
@@ -142,8 +158,8 @@ def install_integration(
     codex_home: Path | None = None,
     agents_home: Path | None = None,
     source_skill: Path | None = None,
-    mem_command: str = "mem",
-    mcp_command: str = "mem-mcp",
+    mem_command: str | None = None,
+    mcp_command: str | None = None,
     replace_skill: bool = False,
     archive_legacy_skill: bool = False,
     apply: bool = False,
@@ -151,6 +167,9 @@ def install_integration(
     """Plan or install the user-scoped Codex integration without touching unrelated config."""
     root = resolve_brain_root(brain_root)
     paths = integration_paths(codex_home=codex_home, agents_home=agents_home)
+    observed = _snapshot_paths(
+        [paths["skill"], paths["agents"], paths["hooks"], paths["config"], paths["manifest"]]
+    )
     source = (source_skill or canonical_skill_source()).expanduser().resolve()
     if not source.is_file():
         raise BrainError(
@@ -167,10 +186,16 @@ def install_integration(
     actions: list[str] = []
 
     skill_path = paths["skill"]
+    skill_bytes = source_bytes
     if skill_path.is_file():
+        installed_bytes = skill_path.read_bytes()
         installed_hash = _hash_file(skill_path)
+        preserved = _preserve_description(source_bytes, installed_bytes, manifest)
         if installed_hash == source_hash:
             actions.append("skill already current")
+        elif preserved is not None and not replace_skill:
+            skill_bytes = preserved
+            actions.append("refresh canonical guidance and preserve locally edited skill description")
         elif installed_hash == prior_skill_hash or replace_skill:
             actions.append("update canonical skill")
         else:
@@ -209,6 +234,10 @@ def install_integration(
 
     agents_text = _read_text(paths["agents"])
     try:
+        if _block_state(agents_text, AGENTS_START, AGENTS_END, AGENTS_BLOCK) == "drifted":
+            old_block = agents_text[agents_text.index(AGENTS_START):agents_text.index(AGENTS_END) + len(AGENTS_END)]
+            if _sha256(old_block.encode()) != _nested_string(manifest, "agents", "block_sha256"):
+                raise BrainError("refusing to overwrite locally edited AGENTS managed policy; merge it explicitly")
         merged_agents = _upsert_marked_block(agents_text, AGENTS_START, AGENTS_END, AGENTS_BLOCK)
     except BrainError as exc:
         conflicts.append(str(exc))
@@ -236,8 +265,7 @@ def install_integration(
     config_text = _read_text(paths["config"])
     try:
         _validate_toml(config_text, paths["config"])
-        _check_unmanaged_mcp_conflict(config_text)
-        merged_config = _upsert_marked_block(config_text, MCP_START, MCP_END, mcp_block)
+        merged_config = _merge_mcp_config(config_text, mcp_block)
         _validate_toml(merged_config, paths["config"])
     except BrainError as exc:
         conflicts.append(str(exc))
@@ -256,17 +284,28 @@ def install_integration(
         "actions": actions,
         "warnings": warnings,
         "paths": {key: str(value) for key, value in paths.items()},
+        "launchers": {"hook": _mem_command(mem_command), "mcp": mcp_command or sys.executable,
+                      "mcp_args": ["-m", "brain.mcp.server"] if mcp_command is None else []},
     }
+    proposed = {paths["skill"]: skill_bytes, paths["agents"]: merged_agents.encode(),
+                paths["hooks"]: rendered_hooks.encode(), paths["config"]: merged_config.encode()}
+    report["changes"] = [{"path": str(path), "before_sha256": _hash_file(path),
+                           "after_sha256": _sha256(content)}
+                          for path, content in proposed.items() if _hash_file(path) != _sha256(content)]
     if not apply:
         return report
 
-    originals = _snapshot_paths(
-        [paths["skill"], paths["agents"], paths["hooks"], paths["config"], paths["manifest"]]
-    )
+    originals = observed
+    if _snapshot_paths(list(originals)) != originals:
+        raise BrainError("Integration files changed while planning; generate a fresh preview")
+    report["backup"] = str(_save_install_backup(paths, originals))
+    if _snapshot_paths(list(originals)) != originals:
+        raise BrainError("Integration files changed while backing up; generate a fresh preview")
     next_manifest = {
         "version": INTEGRATION_VERSION,
         "brain_root": str(root),
-        "skill": {"path": str(skill_path), "installed_sha256": source_hash},
+        "skill": {"path": str(skill_path), "installed_sha256": _sha256(skill_bytes),
+                  "source_sha256": source_hash, "installed_description": _description(skill_bytes)},
         "hook": {"config_path": str(paths["hooks"]), "handler": handler},
         "agents": {"path": str(paths["agents"]), "block_sha256": _sha256(AGENTS_BLOCK.encode())},
         "mcp": {"path": str(paths["config"]), "block_sha256": _sha256(mcp_block.encode())},
@@ -282,7 +321,7 @@ def install_integration(
         }
     moved_legacy = False
     try:
-        _atomic_write_bytes(skill_path, source_bytes)
+        _atomic_write_bytes(skill_path, skill_bytes)
         _atomic_write_text(paths["agents"], merged_agents)
         _atomic_write_text(paths["hooks"], rendered_hooks)
         _atomic_write_text(paths["config"], merged_config)
@@ -308,8 +347,8 @@ def collect_integration_status(
     codex_home: Path | None = None,
     agents_home: Path | None = None,
     source_skill: Path | None = None,
-    mem_command: str = "mem",
-    mcp_command: str = "mem-mcp",
+    mem_command: str | None = None,
+    mcp_command: str | None = None,
     check_commands: bool = True,
 ) -> dict[str, Any]:
     """Inspect skill, hook, policy, MCP, command, and root drift without writing."""
@@ -322,7 +361,7 @@ def collect_integration_status(
         skill_state = "missing"
     elif desired_skill_hash is None:
         skill_state = "source-missing"
-    elif installed_skill_hash == desired_skill_hash:
+    elif installed_skill_hash == desired_skill_hash or _same_skill_guidance(source.read_bytes(), paths["skill"].read_bytes()):
         skill_state = "current"
     else:
         skill_state = "drifted"
@@ -348,7 +387,7 @@ def collect_integration_status(
 
     config_text = _read_text(paths["config"])
     mcp_block = desired_mcp_block(root, mcp_command=mcp_command)
-    mcp_state = _block_state(config_text, MCP_START, MCP_END, mcp_block)
+    mcp_state = _mcp_state(config_text, mcp_block)
     config_valid = True
     hooks_enabled = True
     try:
@@ -366,8 +405,8 @@ def collect_integration_status(
     legacy_archive_present = paths["legacy_archive"].is_dir()
     root_valid = (root / "config.toml").is_file() and (root / "pages").is_dir()
     commands = {
-        "mem": shutil.which(mem_command) if check_commands else "unchecked",
-        "mem_mcp": shutil.which(mcp_command) if check_commands else "unchecked",
+        "mem": _command_path(_mem_command(mem_command)) if check_commands else "unchecked",
+        "mem_mcp": _command_path(mcp_command or sys.executable) if check_commands else "unchecked",
     }
 
     issues: list[str] = []
@@ -649,6 +688,175 @@ def _is_owned_handler(handler: Any, *, previous: Any, desired: Any = None) -> bo
     if isinstance(previous, dict) and handler == previous:
         return True
     return isinstance(desired, dict) and handler == desired
+
+
+def _description(content: bytes) -> str | None:
+    text = content.decode("utf-8")
+    header = re.match(r"\A---\r?\n(.*?)\r?\n---", text, re.S)
+    match = re.search(r"(?m)^description:[^\r\n]*(?:\r?\n[ \t]+[^\r\n]+)*", header[1]) if header else None
+    return match[0] if match else None
+
+
+def _replace_description(content: bytes, description: str) -> bytes:
+    current = _description(content)
+    if current is None:
+        return content
+    return content.decode("utf-8").replace(current, description, 1).encode("utf-8")
+
+
+def _same_skill_guidance(source: bytes, installed: bytes) -> bool:
+    description = _description(installed)
+    return description is not None and _replace_description(source, description) == installed
+
+
+def _preserve_description(source: bytes, installed: bytes, manifest: dict) -> bytes | None:
+    description = _description(installed)
+    original_description = _nested_string(manifest, "skill", "installed_description") or _description(source)
+    if description is None or original_description is None:
+        return None
+    restored = _replace_description(installed, original_description)
+    if _same_skill_guidance(source, installed) or _sha256(restored) == _nested_string(manifest, "skill", "installed_sha256"):
+        return _replace_description(source, description)
+    return None
+
+
+def _save_install_backup(paths: dict[str, Path], originals: dict[Path, bytes | None]) -> Path:
+    directory = paths["codex_home"] / "brainmem" / "backups" / uuid.uuid4().hex
+    directory.mkdir(parents=True, exist_ok=False)
+    entries = {}
+    for name in ("skill", "agents", "hooks", "config", "manifest"):
+        path = paths[name]
+        content = originals[path]
+        entries[name] = {"path": str(path), "sha256": _sha256(content) if content is not None else None}
+        if content is not None:
+            _atomic_write_bytes(directory / name, content)
+            if (directory / name).read_bytes() != content:
+                raise BrainError("Integration backup verification failed")
+    _atomic_write_text(directory / "manifest.json", json.dumps({"files": entries}, indent=2))
+    return directory
+
+
+def _table_path(header: str) -> tuple[str, ...]:
+    try:
+        node = tomllib.loads(header + "\n__brainmem_probe = 1\n")
+    except tomllib.TOMLDecodeError as exc:
+        raise BrainError("Cannot safely isolate a TOML table; review the layout manually") from exc
+    parts = []
+    while isinstance(node, dict) and "__brainmem_probe" not in node and len(node) == 1:
+        key, node = next(iter(node.items()))
+        parts.append(key)
+    return tuple(parts)
+
+
+def _assignment_comments(text: str) -> str:
+    comments = []
+    quote = ""
+    for line in text.splitlines():
+        i = 0
+        while i < len(line):
+            if quote:
+                if quote.startswith('"') and line[i] == "\\":
+                    i += 2
+                elif line.startswith(quote, i):
+                    i += len(quote)
+                    quote = ""
+                else:
+                    i += 1
+            elif line[i] == "#":
+                comments.append(line[i:] + "\n")
+                break
+            elif line[i] in "\"'":
+                quote = line[i] * (3 if line.startswith(line[i] * 3, i) else 1)
+                i += len(quote)
+            else:
+                i += 1
+    return "".join(comments)
+
+
+def _update_mcp_fields(section: str, before: dict, desired: dict) -> str:
+    for key, value in desired.items():
+        if before.get(key) == value:
+            continue
+        assignment = tomli_w.dumps({key: value})
+        key_pattern = re.escape(key)
+        match = re.search(rf"(?m)^[ \t]*(?:{key_pattern}|\"{key_pattern}\"|'{key_pattern}')[ \t]*=", section)
+        if match is None:
+            section = section.rstrip("\n") + "\n" + assignment + "\n"
+            continue
+        start = match.start()
+        end = section.find("\n", match.end())
+        while True:
+            stop = len(section) if end < 0 else end + 1
+            old = section[start:stop]
+            try:
+                tomllib.loads(old)
+                break
+            except tomllib.TOMLDecodeError as exc:
+                if end < 0:
+                    raise BrainError("Cannot safely isolate a BrainMem TOML setting") from exc
+                end = section.find("\n", end + 1)
+        section = section[:start] + _assignment_comments(old) + assignment + section[stop:]
+    return section
+
+
+def _merge_mcp_config(text: str, desired_block: str) -> str:
+    """Move foreign tables outside markers; edit only BrainMem launch fields.
+
+    Verify the entire parsed result against the intended change. Ambiguous TOML
+    layouts fail closed instead of guessing about scope or deleting user content.
+    """
+    if MCP_START not in text and MCP_END not in text:
+        _check_unmanaged_mcp_conflict(text)
+        return _upsert_marked_block(text, MCP_START, MCP_END, desired_block)
+    if text.count(MCP_START) != 1 or text.count(MCP_END) != 1 or text.index(MCP_END) < text.index(MCP_START):
+        raise BrainError("malformed or duplicate managed MCP markers")
+    original = tomllib.loads(text)
+    desired = tomllib.loads(desired_block)["mcp_servers"]["brainmem"]
+    before = original.get("mcp_servers", {}).get("brainmem", {})
+    if "enabled_tools" in before:
+        desired["enabled_tools"] = before["enabled_tools"]
+    start, end = text.index(MCP_START), text.index(MCP_END)
+    body = text[start + len(MCP_START):end]
+    headers = list(re.finditer(r"(?m)^[ \t]*\[[^\n]+\][ \t]*(?:#[^\n]*)?$", body))
+    owned, foreign = [], []
+    prefix = body[:headers[0].start()] if headers else body
+    for i, header in enumerate(headers):
+        stop = headers[i + 1].start() if i + 1 < len(headers) else len(body)
+        section = body[header.start():stop]
+        path = _table_path(header[0])
+        if path[:2] == ("mcp_servers", "brainmem"):
+            if len(path) == 2:
+                section = _update_mcp_fields(section, before, desired)
+            owned.append(section)
+        else:
+            foreign.append(section)
+    if not owned:
+        raise BrainError("Managed MCP block has no identifiable BrainMem table")
+    merged = text[:start] + MCP_START + prefix + "".join(owned).rstrip("\n") + "\n" + MCP_END
+    if foreign:
+        merged += "\n\n" + "".join(foreign)
+    merged += text[end + len(MCP_END):]
+    expected = copy.deepcopy(original)
+    expected["mcp_servers"]["brainmem"].update(desired)
+    _validate_toml(merged, Path("Codex config.toml"))
+    if tomllib.loads(merged) != expected:
+        raise BrainError("MCP repair would change unrelated TOML semantics; review the layout manually")
+    return merged
+
+
+def _mcp_state(text: str, expected: str) -> str:
+    state = _block_state(text, MCP_START, MCP_END, expected)
+    if state != "drifted":
+        return state
+    try:
+        current = tomllib.loads(text).get("mcp_servers", {}).get("brainmem", {})
+        desired = tomllib.loads(expected)["mcp_servers"]["brainmem"]
+        tools = current.get("enabled_tools", [])
+        if not isinstance(tools, list) or not {"brain_status", "brain_ask", "brain_inject"}.issubset(tools):
+            return "drifted"
+        return "current" if all(current.get(k) == v for k, v in desired.items() if k != "enabled_tools") else "drifted"
+    except (tomllib.TOMLDecodeError, TypeError):
+        return "invalid"
 
 
 def _check_unmanaged_mcp_conflict(text: str) -> None:
