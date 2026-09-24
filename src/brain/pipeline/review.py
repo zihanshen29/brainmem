@@ -513,6 +513,7 @@ def _approve_fact_conflict(
             conn.execute("UPDATE facts SET valid_to = ? WHERE id = ?", (valid_to, old_fact.id))
             report.facts_superseded.append(old_fact.id)
 
+        _touch_approved_fact_page(conn, paths, decision, report)
         _record_review_event(paths, decision, "approved", report)
 
     report.archived_path = _mark_and_archive(decision.path, ReviewStatus.APPROVED, decision.action)
@@ -535,11 +536,45 @@ def _approve_low_confidence_fact(
         fact_id = add_fact(conn, _fact_from_candidate(decision.candidate, _now_utc()))
         report.facts_added.append(fact_id)
         report.entity_id = decision.candidate.subject
+        _touch_approved_fact_page(conn, paths, decision, report)
         _record_review_event(paths, decision, "approved", report)
 
     report.archived_path = _mark_and_archive(decision.path, ReviewStatus.APPROVED, decision.action)
     report.applied = True
     return report
+
+
+def _touch_approved_fact_page(
+    conn: sqlite3.Connection,
+    paths: BrainPaths,
+    decision: ReviewDecision,
+    report: ReviewApplyReport,
+) -> None:
+    """Record approved evidence through the same page path as accepted ingest facts."""
+    from brain.pages import regenerate_index
+
+    candidate = decision.candidate
+    assert candidate is not None
+    ingest_pipeline = importlib.import_module("brain.pipeline.ingest")
+    event = _pending_event(decision, candidate)
+    ingest_report = ingest_pipeline.IngestReport()
+    ingest_pipeline._touch_subject_page(
+        paths=paths,
+        conn=conn,
+        subject_id=candidate.subject,
+        source_ref=candidate.source_ref or event.source_ref,
+        event_id=event.id,
+        event_date=event.timestamp.date().isoformat(),
+        timeline_summary=f"Approved fact: {candidate.subject} {candidate.predicate} {candidate.object}",
+        report=ingest_report,
+        result=ingest_pipeline.ItemResult(),
+        suggested_page_type=_page_type_data(decision),
+        force_page=True,
+    )
+    ingest_pipeline._rebuild_touched_backlinks(conn, paths, ingest_report.pages_touched)
+    report.pages_touched.extend(ingest_report.pages_touched)
+    regenerate_index(paths.root)
+    report.follow_ups.append("Page evidence updated; run mem reindex to refresh semantic retrieval.")
 
 
 def _approve_pending_fact(

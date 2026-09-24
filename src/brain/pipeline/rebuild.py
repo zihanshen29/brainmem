@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import sqlite3
-from contextlib import suppress
+from contextlib import closing, suppress
 from datetime import UTC, datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -49,26 +50,33 @@ def rebuild_db(brain_root: Path, *, auto_commit: bool | None = None) -> RebuildR
     paths = BrainPaths(Path(brain_root))
     report = RebuildReport(scope="db")
 
-    _remove_db_files(paths.db_path)
     paths.db_path.parent.mkdir(parents=True, exist_ok=True)
-    init_db(paths.db_path)
-
-    conn = connect(paths.db_path)
-    try:
-        pages = _collect_parseable_pages(paths, report)
-        entity_pages = [
-            item for item in pages if item[1].frontmatter.type is PageType.ENTITY
-        ]
-        with conn:
-            _rebuild_entities(conn, paths, entity_pages, report)
-            report.backlinks_rebuilt = _replace_all_backlinks(conn, pages)
-
-        regenerate_index(paths.root)
+    pages = _collect_parseable_pages(paths, report)
+    if report.errors:
+        raise BrainError("Cannot rebuild database: " + "; ".join(report.errors))
+    entity_pages = [item for item in pages if item[1].frontmatter.type is PageType.ENTITY]
+    previous_index = paths.pages_index.read_bytes() if paths.pages_index.exists() else None
+    with TemporaryDirectory(prefix=".rebuild-", dir=paths.root) as directory:
+        staged_db = Path(directory) / "brain.db"
+        init_db(staged_db)
+        with closing(connect(staged_db)) as conn:
+            with conn:
+                _rebuild_entities(conn, paths, entity_pages, report)
+                report.backlinks_rebuilt = _replace_all_backlinks(conn, pages)
+            if conn.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                raise BrainError("Rebuilt database failed integrity check")
+            if conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise BrainError("Rebuilt database failed foreign key check")
+        try:
+            regenerate_index(paths.root)
+            _publish_rebuilt_db(staged_db, paths.db_path)
+        except Exception:
+            if previous_index is None:
+                paths.pages_index.unlink(missing_ok=True)
+            else:
+                paths.pages_index.write_bytes(previous_index)
+            raise
         report.index_rebuilt = True
-        _finalize_db(conn, paths.db_path)
-    finally:
-        conn.close()
-        _remove_sqlite_sidecars(paths.db_path)
 
     report.committed = _maybe_commit(
         paths,
@@ -346,16 +354,28 @@ def _resolve_unique_page(paths: BrainPaths, slug: str) -> tuple[Path, Page]:
     return matches[0]
 
 
-def _remove_db_files(db_path: Path) -> None:
-    for path in [
-        db_path,
-        db_path.with_name(f"{db_path.name}-wal"),
-        db_path.with_name(f"{db_path.name}-shm"),
-    ]:
+def _publish_rebuilt_db(staged_db: Path, db_path: Path) -> None:
+    """Let SQLite replace a healthy destination transactionally, honoring its locks."""
+    corrupt = False
+    with closing(sqlite3.connect(db_path)) as destination:
         try:
-            path.unlink()
-        except FileNotFoundError:
-            continue
+            destination.execute("PRAGMA user_version").fetchone()
+        except sqlite3.DatabaseError as exc:
+            if getattr(exc, "sqlite_errorcode", None) != sqlite3.SQLITE_NOTADB:
+                raise
+            corrupt = True
+        if not corrupt:
+            def check_busy(status: int, remaining: int, total: int) -> None:
+                if status in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
+                    raise BrainError("Database is busy; stop other writers before rebuilding")
+
+            with closing(sqlite3.connect(staged_db)) as source:
+                source.backup(destination, pages=128, progress=check_busy)
+    if corrupt:
+        # A non-SQLite file cannot be a backup destination. Never discard live WAL data.
+        if any(db_path.with_name(db_path.name + suffix).exists() for suffix in ("-wal", "-shm")):
+            raise BrainError("Corrupt database has SQLite sidecars; recover them before rebuilding")
+        staged_db.replace(db_path)
 
 
 def _finalize_db(conn: sqlite3.Connection, db_path: Path) -> None:

@@ -259,6 +259,7 @@ def ingest(
                     staged_item.error,
                     review_writer,
                     report,
+                    advance_cursor=event_id is None,
                 )
                 continue
 
@@ -277,7 +278,9 @@ def ingest(
                         report=report,
                     )
 
-                _record_item_success(paths, conn, item, result, report)
+                _record_item_success(
+                    paths, conn, item, result, report, advance_cursor=event_id is None
+                )
             except Exception as exc:
                 failure_kind = _classify_ingest_failure(exc)
                 if failure_kind is not IngestFailureKind.CONTENT:
@@ -289,8 +292,11 @@ def ingest(
                     exc,
                     review_writer,
                     report,
+                    advance_cursor=event_id is None,
                 )
 
+        if event_id is None and source in {"all", "events"}:
+            _advance_skipped_events(paths, conn)
         _finalize_run(
             conn,
             paths,
@@ -375,6 +381,8 @@ def _record_item_content_failure(
     exc: Exception,
     review_writer: ReviewWriter,
     report: IngestReport,
+    *,
+    advance_cursor: bool = True,
 ) -> None:
     report.errors.append(f"{item.source_ref}: {exc}")
     _write_ingest_error_review(
@@ -384,7 +392,8 @@ def _record_item_content_failure(
         failure_kind=IngestFailureKind.CONTENT,
     )
     if item.source == "events":
-        _set_cursor(conn, "events", item.event.id)
+        if advance_cursor:
+            _set_cursor(conn, "events", item.event.id)
     elif item.laundry_path is not None:
         _archive_failed_laundry_item(paths, item.laundry_path)
 
@@ -630,7 +639,6 @@ def _collect_event_items(
                 raise IngestError(
                     f"Event is not ingestible because it has no raw payload: {event.id}"
                 )
-            _set_cursor(conn, "events", event.id)
             continue
         text = _event_text(paths.root, event)
         items.append(
@@ -671,6 +679,20 @@ def _collect_event_items_without_cursor(
             )
         )
     return items
+
+
+def _advance_skipped_events(paths: BrainPaths, conn: sqlite3.Connection) -> None:
+    """Advance only over the contiguous non-ingestible suffix after completed work."""
+    cursor = _get_cursor(conn, "events")
+    last_skipped = None
+    for event in read_all(paths.events_jsonl):
+        if cursor is not None and event.id <= cursor:
+            continue
+        if event.kind not in {EventKind.BULK_IMPORTED, EventKind.LAUNDRY_INGESTED} and _event_has_payload(event):
+            break
+        last_skipped = event.id
+    if last_skipped is not None:
+        _set_cursor(conn, "events", last_skipped)
 
 
 def _event_text(root: Path, event: Event) -> str:
@@ -999,6 +1021,8 @@ def _touch_subject_page(
     report: IngestReport,
     result: ItemResult,
     suggested_page_type: PageType | None = None,
+    *,
+    force_page: bool = False,
 ) -> None:
     entity = get_entity(conn, subject_id)
     if entity is None:
@@ -1008,7 +1032,7 @@ def _touch_subject_page(
     page_path = _page_path_for_entity(paths, entity, page_type)
     _persist_entity_page_path(conn, paths, entity, page_path)
     if not page_path.exists():
-        if _should_delay_stub_page(entity):
+        if not force_page and _should_delay_stub_page(entity):
             return
         _write_stub_page(page_path, entity, source_ref, page_type)
     else:
@@ -1375,6 +1399,8 @@ def _record_item_success(
     item: IngestItem,
     result: ItemResult,
     report: IngestReport,
+    *,
+    advance_cursor: bool = True,
 ) -> None:
     if item.source == "laundry":
         event = item.event.model_copy(
@@ -1391,7 +1417,8 @@ def _record_item_success(
         _set_cursor(conn, "laundry", item.source_ref)
         return
 
-    _set_cursor(conn, "events", item.event.id)
+    if advance_cursor:
+        _set_cursor(conn, "events", item.event.id)
 
 
 def _archive_laundry_item(paths: BrainPaths, path: Path) -> None:

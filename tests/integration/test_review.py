@@ -135,6 +135,7 @@ def test_parse_review_file_decision_checkbox(
 
 @requires_review_pipeline
 def test_apply_fact_conflict_adds_new_fact_and_supersedes_old(brain_root: Path) -> None:
+    _insert_entity_and_page(brain_root)
     old_fact = _insert_fact(brain_root, object_value="designer")
     candidate = _candidate(object_value="engineer", valid_from="2026-04-28")
     _write_review(
@@ -162,6 +163,7 @@ def test_apply_fact_conflict_adds_new_fact_and_supersedes_old(brain_root: Path) 
 
 @requires_review_pipeline
 def test_apply_low_confidence_approve_inserts_candidate_fact(brain_root: Path) -> None:
+    _insert_entity_and_page(brain_root)
     _write_review(
         brain_root,
         "2026-04-28_001_low_confidence_fact",
@@ -181,6 +183,7 @@ def test_apply_low_confidence_approve_inserts_candidate_fact(brain_root: Path) -
 
 @requires_review_pipeline
 def test_apply_pending_isolates_bad_review_and_continues(brain_root: Path) -> None:
+    _insert_entity_and_page(brain_root)
     bad_path = _write_review(
         brain_root,
         "2026-04-28_001_low_confidence_fact",
@@ -627,6 +630,7 @@ def test_cli_review_lists_applies_and_opens_by_prefix(
     brain_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _insert_entity_and_page(brain_root)
     _write_review(
         brain_root,
         "2026-04-28_001_low_confidence_fact",
