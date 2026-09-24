@@ -54,6 +54,23 @@ def test_embed_returns_vectors_from_sdk_response() -> None:
     ]
 
 
+def test_token_count_falls_back_when_tokenizer_table_is_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tiktoken
+
+    def offline(*_args: object, **_kwargs: object) -> None:
+        raise ConnectionError("tokenizer table download blocked")
+
+    monkeypatch.setattr(tiktoken, "encoding_for_model", offline)
+    monkeypatch.setattr(tiktoken, "get_encoding", offline)
+    config = EmbeddingConfig(model="text-embedding-3-small", dimension=3)
+    embedding = OpenAICompatibleEmbeddingClient(config, client=FakeOpenAIClient())
+
+    assert embedding.embed(["alpha", "测试"]) == [[0.1, 0.2, 0.3], [0.1, 0.2, 0.3]]
+    assert embedding.last_call_tokens == 4
+
+
 def test_base_url_passed_to_openai_client(monkeypatch: pytest.MonkeyPatch) -> None:
     seen_kwargs: dict[str, str] = {}
 

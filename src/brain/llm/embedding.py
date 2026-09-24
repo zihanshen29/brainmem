@@ -8,6 +8,7 @@ import tiktoken
 
 from brain.config import EmbeddingConfig
 from brain.exceptions import EmbeddingError
+from brain.tokens import approximate_tokens
 
 
 class EmbeddingClient(Protocol):
@@ -107,9 +108,14 @@ class OpenAICompatibleEmbeddingClient:
 
     def _count_tokens(self, texts: Sequence[str]) -> int:
         try:
-            encoding = tiktoken.encoding_for_model(self._config.model)
+            try:
+                encoding = tiktoken.encoding_for_model(self._config.model)
+            except KeyError:  # an OpenAI-compatible model tiktoken does not know
+                encoding = tiktoken.get_encoding("cl100k_base")
         except Exception:
-            encoding = tiktoken.get_encoding("cl100k_base")
+            # The tokenizer table downloads on first use from a separate host. Usage
+            # accounting must not stop embedding when that host is unreachable.
+            return sum(approximate_tokens(text) for text in texts)
         return sum(len(encoding.encode(text)) for text in texts)
 
     @staticmethod

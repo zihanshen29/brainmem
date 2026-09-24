@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import re
 from collections.abc import Sequence
 from pathlib import Path
@@ -15,10 +14,10 @@ from brain.pages import parse_page
 from brain.paths import BrainPaths
 from brain.pipeline.ask import AskMode, _recent_timeline, ask
 from brain.pipeline.retrieval.keyword import tokenize
+from brain.tokens import approximate_tokens
 
 OutputFormat = Literal["markdown", "text"]
 
-CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 MIN_TRUNCATED_FRAGMENT_TOKENS = 8
 
 
@@ -224,9 +223,7 @@ def estimate_tokens(text: str) -> int:
         encoding = tiktoken.get_encoding("cl100k_base")
         return max(1, len(encoding.encode(text)))
     except Exception:
-        cjk_chars = len(CJK_RE.findall(text))
-        other_chars = len(text) - cjk_chars
-        return max(1, cjk_chars + math.ceil(other_chars / 3.5))
+        return approximate_tokens(text)
 
 
 def _resolve_snapshot_path(paths: BrainPaths, snapshot_path: Path | None) -> Path:
