@@ -6,7 +6,8 @@ import re
 VOCABULARY = {
     "current_commit": ("one", ("has_current_commit", "has_production_commit"), "当前提交"),
     "database_head": ("one", ("db_head", "has_database_head", "has_alembic_head"), "数据库版本"),
-    "status": ("one", ("has_status", "current_status"), "状态"),
+    "status": ("many", ("has_status", "current_status"), "进展"),
+    "lifecycle_state": ("one", (), "生命周期状态"),
     "works_at": ("one", ("employed_by",), "任职于"),
     "role": ("one", ("has_role",), "角色"),
     "lives_in": ("one", ("resides_in",), "居住地"),

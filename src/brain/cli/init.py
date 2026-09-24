@@ -202,8 +202,9 @@ auto_reindex = true
 cost_confirm_threshold_usd = 1.0
 
 [ingest]
-confidence_auto_accept = 0.85
+confidence_auto_accept = 0.80
 confidence_auto_reject = 0.50
+entity_confidence_auto_accept = 0.85
 
 [tier]
 tier3_threshold = 1

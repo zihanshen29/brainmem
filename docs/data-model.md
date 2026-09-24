@@ -72,8 +72,9 @@ unit_cost_per_1m_tokens = 0.02      # 用于 cost estimate
 brain_root = "~/brain"
 
 [ingest]
-confidence_auto_accept = 0.85
+confidence_auto_accept = 0.80
 confidence_auto_reject = 0.50
+entity_confidence_auto_accept = 0.85
 
 [tier]
 tier3_threshold = 1

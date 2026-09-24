@@ -585,6 +585,9 @@ def _touch_approved_fact_page(
     assert candidate is not None
     ingest_pipeline = importlib.import_module("brain.pipeline.ingest")
     event = _pending_event(decision, candidate)
+    from brain.predicates import fact_sentence, uses_chinese
+
+    language = load_config(paths.config_path).ingest.output_language
     ingest_report = ingest_pipeline.IngestReport()
     ingest_pipeline._touch_subject_page(
         paths=paths,
@@ -593,11 +596,13 @@ def _touch_approved_fact_page(
         source_ref=candidate.source_ref or event.source_ref,
         event_id=event.id,
         event_date=event.timestamp.date().isoformat(),
-        timeline_summary=f"Approved fact: {candidate.subject} {candidate.predicate} {candidate.object}",
+        timeline_summary=fact_sentence(candidate.subject, candidate.predicate, candidate.object,
+                                       chinese=uses_chinese(candidate.object, language)),
         report=ingest_report,
         result=ingest_pipeline.ItemResult(),
         suggested_page_type=_page_type_data(decision),
         force_page=True,
+        output_language=language,
     )
     ingest_pipeline._rebuild_touched_backlinks(conn, paths, ingest_report.pages_touched)
     report.pages_touched.extend(ingest_report.pages_touched)
@@ -633,7 +638,7 @@ def _approve_pending_fact(
     item = ingest_pipeline.IngestItem(
         source="events",
         source_ref=normalized.source_ref or event.source_ref,
-        text="",
+        text=normalized.object,
         event=event,
     )
     result = ingest_pipeline.ItemResult()
@@ -650,6 +655,7 @@ def _approve_pending_fact(
             report=ingest_report,
             result=result,
             suggested_page_type=suggested_page_type,
+            confidence_approved=True,
         )
         ingest_pipeline._rebuild_touched_backlinks(conn, paths, ingest_report.pages_touched)
 

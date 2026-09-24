@@ -53,7 +53,12 @@ from brain.paths import BrainPaths
 from brain.pipeline.autolink import extract_backlinks
 from brain.pipeline.conflict import Decision, classify_fact
 from brain.pipeline.reindex import reindex
-from brain.pipeline.resolve import resolve_entity
+from brain.pipeline.resolve import (
+    _slug_from_name,
+    matching_entity_ids,
+    normalize_name,
+    resolve_entity,
+)
 from brain.pipeline.signal_detect import (
     ProcedureCandidate,
     SignalEntity,
@@ -837,6 +842,7 @@ def _apply_extraction(
     report: IngestReport,
 ) -> ItemResult:
     result = ItemResult()
+    extraction = _focus_extraction(conn, extraction, config.ingest.confidence_auto_reject)
     entity_map, unresolved = _resolve_entities(
         conn,
         extraction.entities,
@@ -895,6 +901,37 @@ def _apply_extraction(
     return result
 
 
+def _incidental_value(name: str) -> bool:
+    """Recognize concrete artifact/version values, never infer a person's identity."""
+    return bool(re.search(
+        r"(?:[a-zA-Z]:[\\/]|https?://|[/\\][\w.-]+|"
+        r"\.(?:md|txt|json|toml|ya?ml|py|ts|tsx|js|jsx|html|ps1|sh|pdf|docx?)\b|"
+        r"\bv?\d+(?:\.\d+)+\b|[a-zA-Z]\d+\.\d+)", name
+    ))
+
+
+def _focus_extraction(conn, extraction: SignalExtraction, reject: float) -> SignalExtraction:
+    # Unused mentions remain in the source/cache; only factual endpoints need identity work.
+    facts = []
+    referenced: set[str] = set()
+    for candidate in extraction.facts:
+        if candidate.confidence < reject:
+            continue
+        if (candidate.object_type is FactObjectType.ENTITY
+                and _incidental_value(candidate.object)
+                and not matching_entity_ids(conn, candidate.object)):
+            candidate = candidate.model_copy(update={"object_type": FactObjectType.LITERAL})
+        facts.append(candidate)
+        referenced.add(normalize_name(candidate.subject))
+        if candidate.object_type is FactObjectType.ENTITY:
+            referenced.add(normalize_name(candidate.object))
+    entities = [entity for entity in extraction.entities
+                if normalize_name(entity.name) in referenced
+                or _slug_from_name(entity.name) in referenced
+                or bool(set(matching_entity_ids(conn, entity.name)) & referenced)]
+    return extraction.model_copy(update={"entities": entities, "facts": facts})
+
+
 def _resolve_entities(
     conn: sqlite3.Connection,
     signal_entities: list[SignalEntity],
@@ -910,7 +947,7 @@ def _resolve_entities(
             continue
         entity = resolve_entity(conn, signal_entity.name, signal_entity.type,
                                 confidence=signal_entity.confidence,
-                                auto_accept=config.ingest.confidence_auto_accept)
+                                auto_accept=config.ingest.entity_confidence_auto_accept)
         if entity is None:
             unresolved.add(signal_entity.name)
             _write_new_entity_review(review_writer, signal_entity)
@@ -1033,19 +1070,20 @@ def _handle_candidate(
     report: IngestReport,
     result: ItemResult,
     suggested_page_type: PageType | None = None,
+    confidence_approved: bool = False,
 ) -> None:
     auto_accept = config.ingest.confidence_auto_accept
     auto_reject = config.ingest.confidence_auto_reject
 
-    if candidate.confidence < auto_reject:
-        return
-    if candidate.confidence < auto_accept:
-        _write_low_confidence_review(review_writer, candidate)
-        return
-
     decision = classify_fact(conn, candidate, config)
     if decision is Decision.NOOP:
         return
+    if not confidence_approved and candidate.confidence < auto_reject:
+        return
+    if not confidence_approved and candidate.confidence < auto_accept:
+        _write_low_confidence_review(review_writer, candidate)
+        return
+
     if decision is Decision.CONFLICT:
         _write_fact_conflict_review(
             review_writer,

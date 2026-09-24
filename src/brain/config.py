@@ -59,6 +59,7 @@ class IngestConfig(BaseModel):
 
     confidence_auto_accept: float = Field(..., ge=0.0, le=1.0)
     confidence_auto_reject: float = Field(..., ge=0.0, le=1.0)
+    entity_confidence_auto_accept: float = Field(default=0.85, ge=0.0, le=1.0)
     chunk_max_chars: int = Field(default=4000, ge=256)
     output_language: str = "source"
 
